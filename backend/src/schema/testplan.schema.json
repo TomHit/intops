@@ -47,6 +47,7 @@
         "ai_error": { "type": "string" }
       }
     },
+
     "suites": {
       "type": "array",
       "minItems": 1,
@@ -68,12 +69,30 @@
       }
     },
 
-    "RequestShape": {
+    "ApiDetails": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["query", "headers"],
+      "required": ["method", "path"],
       "properties": {
-        "query": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+        },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "TestData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path_params", "query_params", "headers", "request_body"],
+      "properties": {
+        "path_params": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "query_params": {
           "type": "object",
           "additionalProperties": true,
           "default": {}
@@ -83,7 +102,7 @@
           "additionalProperties": true,
           "default": {}
         },
-        "body": {}
+        "request_body": {}
       }
     },
 
@@ -93,23 +112,30 @@
       "required": [
         "id",
         "title",
-        "type",
+        "module",
+        "test_type",
         "priority",
-        "method",
-        "path",
-        "request",
+        "objective",
+        "preconditions",
+        "test_data",
         "steps",
-        "expected",
-        "assertions",
-        "needs_review"
+        "expected_results",
+        "api_details",
+        "validation_focus",
+        "references",
+        "needs_review",
+        "review_notes"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
+
         "title": { "type": "string", "minLength": 1 },
 
-        "type": {
+        "module": { "type": "string", "minLength": 1 },
+
+        "test_type": {
           "type": "string",
-          "enum": ["smoke", "contract", "negative", "auth", "performance"]
+          "enum": ["contract", "schema", "negative", "auth"]
         },
 
         "priority": {
@@ -117,23 +143,7 @@
           "enum": ["P0", "P1", "P2", "P3"]
         },
 
-        "severity": {
-          "type": "string",
-          "enum": ["blocker", "critical", "major", "minor"]
-        },
-
-        "tags": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": []
-        },
-
-        "method": {
-          "type": "string",
-          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
-        },
-
-        "path": { "type": "string", "minLength": 1 },
+        "objective": { "type": "string", "minLength": 1 },
 
         "preconditions": {
           "type": "array",
@@ -141,7 +151,7 @@
           "default": []
         },
 
-        "request": { "$ref": "#/$defs/RequestShape" },
+        "test_data": { "$ref": "#/$defs/TestData" },
 
         "steps": {
           "type": "array",
@@ -149,24 +159,31 @@
           "items": { "type": "string" }
         },
 
-        "expected": {
+        "expected_results": {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string" }
         },
 
-        "assertions": {
+        "api_details": { "$ref": "#/$defs/ApiDetails" },
+
+        "validation_focus": {
           "type": "array",
-          "items": {},
+          "items": { "type": "string" },
+          "default": []
+        },
+
+        "references": {
+          "type": "array",
+          "items": { "type": "string" },
           "default": []
         },
 
         "needs_review": { "type": "boolean" },
 
         "review_notes": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": []
+          "type": "string",
+          "default": ""
         }
       }
     },

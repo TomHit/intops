@@ -1,19 +1,30 @@
 import React from "react";
 
+const TEST_TYPES = ["contract", "schema", "negative", "auth"];
+
 export default function GenerationOptions({ options, onChange }) {
   function toggleInclude(key) {
     const set = new Set(options.include || []);
     if (set.has(key)) set.delete(key);
     else set.add(key);
+
     onChange({ ...options, include: Array.from(set) });
+  }
+
+  function selectRecommended() {
+    onChange({
+      ...options,
+      include: ["contract", "schema"],
+    });
   }
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div>
         <div style={styles.label}>Test Types</div>
+
         <div style={styles.row}>
-          {["smoke", "contract", "negative", "performance"].map((k) => (
+          {TEST_TYPES.map((k) => (
             <label key={k} style={styles.chk}>
               <input
                 type="checkbox"
@@ -23,7 +34,7 @@ export default function GenerationOptions({ options, onChange }) {
               {k}
             </label>
           ))}
-          {/* ---- AI toggle (optional enrichment) ---- */}
+
           <label style={{ ...styles.chk, marginLeft: 16 }}>
             <input
               type="checkbox"
@@ -32,6 +43,20 @@ export default function GenerationOptions({ options, onChange }) {
             />
             Use AI (enrich)
           </label>
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            style={styles.smallBtn}
+            onClick={selectRecommended}
+          >
+            Use Recommended (contract + schema)
+          </button>
+        </div>
+
+        <div style={styles.help}>
+          Recommended for Manual QA: contract + schema
         </div>
       </div>
 
@@ -58,6 +83,7 @@ export default function GenerationOptions({ options, onChange }) {
           />
         </div>
       </div>
+
       <div style={styles.row}>
         <div style={{ flex: 1 }}>
           <div style={styles.label}>Spec Source (Swagger / OpenAPI URL)</div>
@@ -79,7 +105,7 @@ export default function GenerationOptions({ options, onChange }) {
           style={styles.textarea}
           value={options.guidance}
           onChange={(e) => onChange({ ...options, guidance: e.target.value })}
-          placeholder="Focus on response structure validation…"
+          placeholder="Focus on contract and schema validation. Make test cases clear for manual testers."
         />
       </div>
     </div>
@@ -103,5 +129,18 @@ const styles = {
     border: "1px solid #ddd",
     width: "100%",
     minHeight: 70,
+  },
+  smallBtn: {
+    padding: "6px 10px",
+    borderRadius: 10,
+    border: "1px solid #ccc",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 12,
+  },
+  help: {
+    marginTop: 6,
+    fontSize: 12,
+    opacity: 0.7,
   },
 };

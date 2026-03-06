@@ -10,8 +10,8 @@ const SCHEMA_SHAPE_GUIDE = `
 Return ONLY JSON.
 Top keys: project, generation, suites.
 Each suite: suite_id,name,endpoints[],cases[].
-Each case: id,title,type,priority,method,path,request{query,headers,body?},steps[],expected[],assertions[],needs_review,review_notes?.
-Rules: method uppercase. Omit request.body for GET/DELETE. assertions must be objects (not strings). Exactly 1 case per included type. Max 3 cases.
+Each case: id,title,module,test_type,priority,objective,preconditions[],test_data{path_params,query_params,headers,request_body},steps[],expected_results[],api_details{method,path},validation_focus[],references[],needs_review,review_notes.
+Rules: method uppercase. test_type must be one of contract/schema/negative/auth. review_notes must be a string. Max 4 cases per endpoint.
 `.trim();
 
 function nowIso() {
@@ -37,13 +37,13 @@ function tryExtractJsonObject(text) {
 /**
  * Build deterministic plan from template engine output
  */
-function buildDeterministicTestPlan({ project, options, endpoints }) {
+async function buildDeterministicTestPlan({ project, options, endpoints }) {
   const endpointRefs = endpoints.map((e) => ({
     method: String(e.method).toUpperCase(),
     path: e.path,
   }));
 
-  const cases = generateCasesForEndpoints(endpoints, options);
+  const cases = await generateCasesForEndpoints(endpoints, options);
 
   console.log(
     "DETERMINISTIC CASES COUNT:",
@@ -75,13 +75,14 @@ function buildDeterministicTestPlan({ project, options, endpoints }) {
     suites,
   };
 }
+
 export async function generateTestPlan(payload) {
   const project_id = payload?.project_id;
   if (!project_id) throw new Error("project_id is required");
 
   const include = Array.isArray(payload?.include)
     ? payload.include
-    : ["smoke", "contract", "negative"];
+    : ["contract", "schema"];
 
   const env = payload?.env || "staging";
   const auth_profile = payload?.auth_profile || "device";
@@ -153,7 +154,7 @@ export async function generateTestPlan(payload) {
   // ------------------------------
   let obj = null;
 
-  const deterministic = buildDeterministicTestPlan({
+  const deterministic = await buildDeterministicTestPlan({
     project: projectBlock,
     options,
     endpoints: endpointRecords,
@@ -229,6 +230,7 @@ export async function generateTestPlan(payload) {
   obj.project.auth_vars = Array.isArray(obj.project.auth_vars)
     ? obj.project.auth_vars
     : projectBlock.auth_vars;
+
   console.log(
     "SUITE CASE COUNTS:",
     (obj.suites || []).map((s) => ({
@@ -250,6 +252,7 @@ export async function generateTestPlan(payload) {
     };
     throw err;
   }
+
   await validateTestPlanOrThrow(obj);
 
   const report = buildReport(obj);

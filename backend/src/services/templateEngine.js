@@ -9,122 +9,165 @@ import {
 } from "../templates/schemaTemplates.js";
 
 import { makeNegativeMissingRequiredQueryTemplate } from "../templates/negativeTemplates.js";
-
 import { makeAuthMissingCredentialsTemplate } from "../templates/authTemplates.js";
 
-/**
- * Helper: check if endpoint has a success response
- */
-function hasSuccessResponse(endpoint) {
-  if (endpoint?.responses && typeof endpoint.responses === "object") {
-    return Object.keys(endpoint.responses).some((k) =>
-      /^2\d\d$/.test(String(k)),
+import { loadRuleCatalog } from "../rules/loadRuleCatalog.js";
+import { RULE_CONDITION_MAP } from "../rules/ruleConditionMap.js";
+
+function normalizeMethod(method) {
+  return String(method || "").toUpperCase();
+}
+
+function methodMatchesFilter(endpoint, methodFilter) {
+  if (!methodFilter) return true;
+
+  const endpointMethod = normalizeMethod(endpoint?.method);
+  const allowed = String(methodFilter)
+    .split("|")
+    .map((m) => normalizeMethod(m.trim()))
+    .filter(Boolean);
+
+  if (allowed.length === 0) return true;
+  return allowed.includes(endpointMethod);
+}
+
+function annotateCase(tc, rule) {
+  if (!tc) return null;
+
+  tc.id = `${tc.id}__${rule.rule_id}`;
+
+  tc.references = Array.isArray(tc.references) ? tc.references : [];
+  tc.references.push(`rule_id:${rule.rule_id}`);
+  tc.references.push(`scenario:${rule.scenario}`);
+
+  if (!tc.review_notes && rule.notes) {
+    tc.review_notes = String(rule.notes);
+  }
+
+  return tc;
+}
+function buildCaseFromCsvRule(rule, endpoint) {
+  const category = String(rule.category || "").toLowerCase();
+  const appliesWhen = String(rule.applies_when || "").trim();
+  const ruleId = String(rule.rule_id || "").trim();
+
+  if (category === "contract") {
+    if (
+      ruleId === "CONTRACT_005" ||
+      appliesWhen === "response_has_required_fields"
+    ) {
+      return annotateCase(makeContractRequiredFieldsTemplate(endpoint), rule);
+    }
+
+    return annotateCase(makeContractSuccessTemplate(endpoint), rule);
+  }
+
+  if (category === "schema") {
+    if (
+      appliesWhen === "request_body_schema_exists" ||
+      appliesWhen === "request_body_has_required_fields" ||
+      appliesWhen === "method_is_post_and_has_request_body" ||
+      appliesWhen === "method_is_put_or_patch_and_has_request_body"
+    ) {
+      return annotateCase(makeSchemaRequestBodyTemplate(endpoint), rule);
+    }
+
+    return annotateCase(makeSchemaResponseTemplate(endpoint), rule);
+  }
+
+  if (category === "negative") {
+    if (appliesWhen === "endpoint_requires_auth") {
+      return annotateCase(makeAuthMissingCredentialsTemplate(endpoint), rule);
+    }
+
+    return annotateCase(
+      makeNegativeMissingRequiredQueryTemplate(endpoint),
+      rule,
     );
   }
 
-  // fallback for summarized parser shape: { status, contentType, schemaSummary }
-  const status = endpoint?.response?.status;
-  return typeof status === "number" && status >= 200 && status < 300;
+  return null;
 }
 
-/**
- * Helper: check if response likely has schema
- */
-function hasResponseSchema(endpoint) {
-  if (endpoint?.responses && typeof endpoint.responses === "object") {
-    for (const [code, val] of Object.entries(endpoint.responses)) {
-      if (!/^2\d\d$/.test(String(code))) continue;
+async function resolveCsvRules(endpoint, options = {}) {
+  const include = Array.isArray(options?.include)
+    ? options.include.map((x) => String(x).toLowerCase())
+    : ["contract", "schema"];
 
-      const content = val?.content || {};
-      const appJson =
-        content["application/json"] || content["application/*+json"];
-      if (appJson?.schema) return true;
+  const catalog = await loadRuleCatalog();
+  const matchedRules = [];
+  const skippedNoCondition = [];
+  const skippedConditionFalse = [];
+
+  for (const rule of catalog) {
+    const category = String(rule.category || "").toLowerCase();
+    if (!include.includes(category)) continue;
+
+    if (!methodMatchesFilter(endpoint, rule.method_filter)) continue;
+
+    const conditionKey = String(rule.applies_when || "").trim();
+    const conditionFn = RULE_CONDITION_MAP[conditionKey];
+
+    if (!conditionFn) {
+      skippedNoCondition.push({
+        rule_id: rule.rule_id,
+        applies_when: conditionKey,
+      });
+      continue;
+    }
+
+    try {
+      if (conditionFn(endpoint, options)) {
+        matchedRules.push(rule);
+      } else {
+        skippedConditionFalse.push({
+          rule_id: rule.rule_id,
+          applies_when: conditionKey,
+        });
+      }
+    } catch (err) {
+      console.error(`CSV rule evaluation failed: ${rule.rule_id}`, err);
     }
   }
 
-  // fallback for summarized parser shape
-  return !!endpoint?.response?.schemaSummary;
-}
-
-/**
- * Helper: check if request body schema exists
- */
-function hasRequestBodySchema(endpoint) {
-  const content = endpoint?.requestBody?.content || {};
-  return !!(
-    content["application/json"]?.schema || content["application/*+json"]?.schema
+  console.log(
+    `MATCHED CSV RULES for ${endpoint?.method} ${endpoint?.path}:`,
+    matchedRules.map((r) => `${r.rule_id} | ${r.category} | ${r.scenario}`),
   );
-}
 
-/**
- * Helper: check required query params
- */
-function hasRequiredQuery(endpoint) {
-  return (
-    Array.isArray(endpoint?.params?.query) &&
-    endpoint.params.query.some((p) => p.required)
-  );
-}
-
-/**
- * Helper: check auth/security
- */
-function hasSecurity(endpoint) {
-  if (Array.isArray(endpoint?.security)) {
-    return endpoint.security.length > 0;
+  if (skippedNoCondition.length > 0) {
+    console.log(
+      "CSV rules skipped because applies_when not mapped:",
+      skippedNoCondition,
+    );
   }
-  return !!endpoint?.security;
+
+  return matchedRules;
 }
 
-/**
- * Generate all applicable test cases for one endpoint
- * Max 1 per included type, max 3 total
- */
-export function generateCasesForEndpoint(endpoint, options = {}) {
-  const include = Array.isArray(options?.include)
-    ? options.include
-    : ["smoke", "contract", "negative"];
-
+export async function generateCasesForEndpoint(endpoint, options = {}) {
+  const matchedRules = await resolveCsvRules(endpoint, options);
   const cases = [];
 
-  // SMOKE
-  if (include.includes("smoke") && hasSuccessResponse(endpoint)) {
-    cases.push(makeContractSuccessTemplate(endpoint));
-  }
-
-  // CONTRACT
-  if (include.includes("contract")) {
-    if (hasResponseSchema(endpoint)) {
-      cases.push(makeContractRequiredFieldsTemplate(endpoint));
-    } else if (hasSuccessResponse(endpoint)) {
-      cases.push(makeContractSuccessTemplate(endpoint));
-    } else if (hasRequestBodySchema(endpoint)) {
-      cases.push(makeSchemaRequestBodyTemplate(endpoint));
+  for (const rule of matchedRules) {
+    try {
+      const tc = buildCaseFromCsvRule(rule, endpoint);
+      if (tc) cases.push(tc);
+    } catch (err) {
+      console.error(`Template build failed for CSV rule: ${rule.rule_id}`, err);
     }
   }
 
-  // NEGATIVE
-  if (include.includes("negative")) {
-    if (hasRequiredQuery(endpoint)) {
-      cases.push(makeNegativeMissingRequiredQueryTemplate(endpoint));
-    } else if (hasSecurity(endpoint)) {
-      cases.push(makeAuthMissingCredentialsTemplate(endpoint));
-    }
-  }
-
-  return cases.slice(0, 3);
+  return cases;
 }
 
-/**
- * Generate test cases for multiple endpoints
- */
-export function generateCasesForEndpoints(endpoints, options = {}) {
+export async function generateCasesForEndpoints(endpoints, options = {}) {
   const eps = Array.isArray(endpoints) ? endpoints : [];
-  let allCases = [];
+  const allCases = [];
 
   for (const endpoint of eps) {
-    const cases = generateCasesForEndpoint(endpoint, options);
-    allCases = allCases.concat(cases);
+    const cases = await generateCasesForEndpoint(endpoint, options);
+    allCases.push(...cases);
   }
 
   return allCases;

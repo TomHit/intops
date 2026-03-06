@@ -4,6 +4,7 @@ import GenerationOptions from "../components/GenerationOptions";
 import TestCaseTable from "../components/TestCaseTable";
 import TestCaseDrawer from "../components/TestCaseDrawer";
 import ExportButtons from "../components/ExportButtons";
+import { TEST_CASE_CSV_COLUMNS } from "../utils/testCaseColumns";
 
 function safeJsonParse(text) {
   try {
@@ -13,25 +14,46 @@ function safeJsonParse(text) {
   }
 }
 
+function summarizeTestData(testData) {
+  if (!testData || typeof testData !== "object") return "-";
+
+  const pathCount = Object.keys(testData.path_params || {}).length;
+  const queryCount = Object.keys(testData.query_params || {}).length;
+  const headerCount = Object.keys(testData.headers || {}).length;
+  const hasBody =
+    testData.request_body !== undefined && testData.request_body !== null;
+
+  return `path:${pathCount} query:${queryCount} headers:${headerCount} body:${hasBody ? "yes" : "no"}`;
+}
+
 function deriveTableRows(testplan) {
   const rows = [];
   if (!testplan?.suites) return rows;
 
   testplan.suites.forEach((s, si) => {
     (s.cases || []).forEach((tc, ci) => {
-      const status = tc?.needs_review ? "needs_review" : "valid";
       rows.push({
-        suite_id: s.suite_id,
-        case_id: tc.id,
-        title: tc.title,
-        type: tc.type,
-        priority: tc.priority,
-        method: tc.method,
-        path: tc.path,
-        status,
-        steps: tc.steps || [],
-        expected: tc.expected || [],
-        assertions: tc.assertions || [],
+        suite_id: s.suite_id || "",
+        id: tc.id || "",
+        title: tc.title || "",
+        module: tc.module || "",
+        test_type: tc.test_type || "",
+        priority: tc.priority || "",
+        objective: tc.objective || "",
+        preconditions: Array.isArray(tc.preconditions) ? tc.preconditions : [],
+        test_data: tc.test_data || {},
+        test_data_summary: summarizeTestData(tc.test_data),
+        steps: Array.isArray(tc.steps) ? tc.steps : [],
+        expected_results: Array.isArray(tc.expected_results)
+          ? tc.expected_results
+          : [],
+        api_details: tc.api_details || {},
+        validation_focus: Array.isArray(tc.validation_focus)
+          ? tc.validation_focus
+          : [],
+        references: Array.isArray(tc.references) ? tc.references : [],
+        needs_review: !!tc.needs_review,
+        review_notes: tc.review_notes || "",
         ref: { suiteIndex: si, caseIndex: ci },
       });
     });
@@ -57,38 +79,15 @@ function toCsvValue(v) {
   const escaped = s.replace(/"/g, '""');
   return `"${escaped}"`;
 }
-
 function buildCsvFromTable(rows) {
-  const header = [
-    "suite_id",
-    "case_id",
-    "title",
-    "type",
-    "priority",
-    "method",
-    "path",
-    "status",
-    "steps",
-    "expected",
-  ];
+  const header = TEST_CASE_CSV_COLUMNS.map((c) => c.label);
   const lines = [header.join(",")];
 
   for (const r of rows) {
-    lines.push(
-      [
-        toCsvValue(r.suite_id),
-        toCsvValue(r.case_id),
-        toCsvValue(r.title),
-        toCsvValue(r.type),
-        toCsvValue(r.priority),
-        toCsvValue(r.method),
-        toCsvValue(r.path),
-        toCsvValue(r.status),
-        toCsvValue((r.steps || []).join(" | ")),
-        toCsvValue((r.expected || []).join(" | ")),
-      ].join(","),
-    );
+    const values = TEST_CASE_CSV_COLUMNS.map((c) => toCsvValue(c.getValue(r)));
+    lines.push(values.join(","));
   }
+
   return lines.join("\n");
 }
 
@@ -103,7 +102,7 @@ export default function GeneratorPage({ projectId, onBack }) {
   });
 
   const [options, setOptions] = useState({
-    include: ["smoke", "contract", "negative"],
+    include: ["contract", "schema"],
     env: "staging",
     auth_profile: "device",
     guidance: "",
@@ -119,7 +118,7 @@ export default function GeneratorPage({ projectId, onBack }) {
     report: null,
   });
 
-  const [activeTab, setActiveTab] = useState("table"); // "table"|"json"
+  const [activeTab, setActiveTab] = useState("table");
   const [drawer, setDrawer] = useState({ open: false, row: null });
 
   const tableRows = useMemo(
@@ -160,6 +159,7 @@ export default function GeneratorPage({ projectId, onBack }) {
       setEndpointsLoading(false);
     }
   }
+
   useEffect(() => {
     loadEndpoints();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,8 +200,10 @@ export default function GeneratorPage({ projectId, onBack }) {
       });
       const text = await res.text();
       const data = safeJsonParse(text);
-      if (!res.ok)
+
+      if (!res.ok) {
         throw new Error(data?.message || `Generate failed: ${res.status}`);
+      }
 
       setRun({
         run_id: data.run_id || "",
