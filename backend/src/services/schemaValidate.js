@@ -35,6 +35,7 @@ export async function validateTestPlanOrThrow(obj) {
       keyword: e.keyword,
       params: e.params,
     }));
+    console.log("AJV ERRORS:", JSON.stringify(errors, null, 2));
 
     const err = new Error("Schema validation failed");
     err.details = { errors };

@@ -1,140 +1,87 @@
+// backend/src/services/deterministicPlan.js
+
 function nowIso() {
   return new Date().toISOString();
 }
 
-function makeId(prefix, i) {
-  return `${prefix}.${String(i).padStart(3, "0")}`;
+function safeId(s) {
+  return String(s || "")
+    .replace(/[^\w]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function makeCase({ type, method, path, i }) {
+  const m = String(method).toUpperCase();
+
+  const request = {
+    query: {},
+    headers: {},
+  };
+
+  if (type === "negative") {
+    request.query = { invalid: "true" };
+  }
+
+  const base = {
+    id: `${type}.${i}.${safeId(m)}.${safeId(path)}`,
+    title: `${type.toUpperCase()} | ${m} ${path}`,
+    type,
+    priority: type === "smoke" ? "P0" : "P1",
+    method: m,
+    path,
+    request,
+
+    steps: [`Send ${m} request to ${path}`],
+
+    expected: ["API responds successfully"],
+
+    assertions: [{ op: "status_check" }],
+
+    needs_review: true,
+
+    review_notes: ["Auto generated baseline test"],
+  };
+
+  if (type === "contract") {
+    base.expected = ["Response status is 2xx", "Response body is valid JSON"];
+  }
+
+  if (type === "negative") {
+    base.priority = "P2";
+    base.expected = ["API returns client error (4xx)"];
+  }
+
+  return base;
 }
 
 export function buildDeterministicTestPlan({ project, options, endpoints }) {
   const include = Array.isArray(options?.include)
     ? options.include
-    : ["contract", "schema"];
+    : ["smoke", "contract", "negative"];
 
-  const suites = [];
+  const eps = Array.isArray(endpoints) ? endpoints : [];
+  if (eps.length === 0) throw new Error("deterministicPlan: endpoints empty");
 
-  // CONTRACT suite
-  if (include.includes("contract")) {
-    const cases = [];
-    let i = 1;
+  const types = include.slice(0, 3);
+  const first = eps[0];
 
-    for (const ep of endpoints) {
-      const eid = ep.id || `${ep.method}_${ep.path}`.replace(/[^\w]+/g, "_");
-
-      // TC: Status code (generic 200)
-      cases.push({
-        id: makeId(`TC.${eid}.contract.status`, i++),
-        title: `Contract | ${ep.method} ${ep.path} returns 2xx`,
-        type: "contract",
-        priority: "P1",
-        method: String(ep.method).toUpperCase(),
-        path: ep.path,
-        request: {
-          query: {},
-          headers: {},
-        },
-        steps: [
-          {
-            action: "send_request",
-            method: String(ep.method).toUpperCase(),
-            path: ep.path,
-          },
-        ],
-        expected: [
-          { kind: "status_2xx" },
-          { kind: "content_type_json" },
-          { kind: "body_is_json" },
-        ],
-        assertions: [
-          { op: "status_in_range", min: 200, max: 299 },
-          {
-            op: "header_contains",
-            key: "content-type",
-            contains: "application/json",
-          },
-        ],
-        needs_review: true,
-        review_notes:
-          "Default contract test. Add required query/path params and auth headers using rules.",
-      });
-
-      // TC: Error contract (optional baseline)
-      cases.push({
-        id: makeId(`TC.${eid}.contract.error`, i++),
-        title: `Contract | ${ep.method} ${ep.path} error shape (if 4xx/5xx)`,
-        type: "contract",
-        priority: "P3",
-        method: String(ep.method).toUpperCase(),
-        path: ep.path,
-        request: {
-          query: {},
-          headers: {},
-        },
-        steps: [
-          {
-            action: "send_request",
-            method: String(ep.method).toUpperCase(),
-            path: ep.path,
-          },
-        ],
-        expected: [{ kind: "json_or_empty_on_error" }],
-        assertions: [{ op: "no_html_error" }],
-        needs_review: true,
-        review_notes:
-          "Baseline error contract. Tighten when spec defines error schema.",
-      });
-    }
-
-    suites.push({
-      suite_id: "contract",
-      name: "Contract Tests (Deterministic)",
-      endpoints: endpoints.map((e) => ({ method: e.method, path: e.path })),
-      cases,
-    });
-  }
-
-  // SCHEMA suite
-  if (include.includes("schema")) {
-    const cases = [];
-    let i = 1;
-
-    for (const ep of endpoints) {
-      const eid = ep.id || `${ep.method}_${ep.path}`.replace(/[^\w]+/g, "_");
-
-      cases.push({
-        id: makeId(`TC.${eid}.schema.ajv`, i++),
-        title: `Schema | ${ep.method} ${ep.path} matches OpenAPI schema (2xx)`,
-        type: "schema",
-        priority: "P1",
-        method: String(ep.method).toUpperCase(),
-        path: ep.path,
-        request: {
-          query: {},
-          headers: {},
-        },
-        steps: [
-          {
-            action: "send_request",
-            method: String(ep.method).toUpperCase(),
-            path: ep.path,
-          },
-          { action: "validate_schema", source: "openapi", status: "2xx" },
-        ],
-        expected: [{ kind: "schema_valid" }],
-        assertions: [{ op: "schema_validate_openapi", status: "2xx" }],
-        needs_review: true,
-        review_notes:
-          "Requires OpenAPI response schema. If missing in spec, mark as baseline-only.",
-      });
-    }
-
-    suites.push({
-      suite_id: "schema",
-      name: "Schema Tests (Deterministic)",
-      endpoints: endpoints.map((e) => ({ method: e.method, path: e.path })),
-      cases,
-    });
-  }
+  const suite = {
+    suite_id: "auto_v1",
+    name: "Deterministic Generated Suite",
+    endpoints: eps.map((e) => ({
+      method: String(e.method).toUpperCase(),
+      path: e.path,
+    })),
+    cases: types.map((t, idx) =>
+      makeCase({
+        type: t,
+        method: first.method,
+        path: first.path,
+        i: idx + 1,
+      }),
+    ),
+  };
 
   return {
     project,
@@ -145,6 +92,6 @@ export function buildDeterministicTestPlan({ project, options, endpoints }) {
       prompt_version: "p1",
       rag_enabled: false,
     },
-    suites,
+    suites: [suite],
   };
 }

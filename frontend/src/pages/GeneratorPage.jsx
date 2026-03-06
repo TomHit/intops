@@ -107,6 +107,7 @@ export default function GeneratorPage({ projectId, onBack }) {
     env: "staging",
     auth_profile: "device",
     guidance: "",
+    ai: false,
   });
 
   const [run, setRun] = useState({
@@ -172,6 +173,7 @@ export default function GeneratorPage({ projectId, onBack }) {
       include: options.include,
       guidance: options.guidance,
       endpoints: endpointRefs,
+      ai: !!options.ai,
     };
 
     try {

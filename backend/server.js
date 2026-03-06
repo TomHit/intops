@@ -72,6 +72,7 @@ app.post("/api/generate", async (req, res) => {
       env: payload?.env,
       auth_profile: payload?.auth_profile,
       include: payload?.include,
+      ai: payload?.ai,
       endpoints_n: Array.isArray(payload?.endpoints)
         ? payload.endpoints.length
         : null,

@@ -3,7 +3,7 @@ import path from "path";
 import { loadOpenApiDoc } from "./openapiLoader.js";
 import { extractEndpoints } from "./openapiParser.js";
 import { buildGeneratorPrompt, buildRepairPrompt } from "./prompt.js";
-import { getAIProvider } from "./providers/ai/index.js";
+import { getAIProvider } from "../providers/ai/index.js";
 import { buildDeterministicTestPlan } from "./deterministicPlan.js";
 import { validateTestPlanOrThrow } from "./schemaValidate.js";
 import { buildReport } from "./report.js";

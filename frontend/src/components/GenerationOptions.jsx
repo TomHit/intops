@@ -23,6 +23,15 @@ export default function GenerationOptions({ options, onChange }) {
               {k}
             </label>
           ))}
+          {/* ---- AI toggle (optional enrichment) ---- */}
+          <label style={{ ...styles.chk, marginLeft: 16 }}>
+            <input
+              type="checkbox"
+              checked={!!options.ai}
+              onChange={(e) => onChange({ ...options, ai: e.target.checked })}
+            />
+            Use AI (enrich)
+          </label>
         </div>
       </div>
 
