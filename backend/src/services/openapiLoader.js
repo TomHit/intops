@@ -27,7 +27,45 @@ export async function loadProjectConfig(projectId) {
   return JSON.parse(raw);
 }
 
-export async function loadOpenApiDoc(projectId) {
+export async function loadOpenApiDoc(projectId, opts = {}) {
+  const override = opts?.specSourceOverride;
+
+  if (override) {
+    if (!/^https?:\/\//i.test(override)) {
+      throw new Error("Only http/https OpenAPI URL is supported right now");
+    }
+
+    const res = await fetch(override, {
+      headers: {
+        Accept: "application/json, text/plain, application/yaml, text/yaml",
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to load OpenAPI URL: ${res.status}`);
+    }
+
+    const text = await res.text();
+
+    let doc;
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      throw new Error("OpenAPI URL must currently return JSON");
+    }
+
+    return {
+      cfg: {
+        project_id: projectId,
+        project_name: projectId,
+        openapi: {
+          mode: "url",
+          value: override,
+        },
+      },
+      doc,
+    };
+  }
   const cfg = await loadProjectConfig(projectId);
 
   if (!cfg?.openapi?.value) throw new Error("Project openapi config missing");

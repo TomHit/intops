@@ -43,8 +43,15 @@ app.get("/api/projects", async (req, res) => {
 app.get("/api/projects/:id/endpoints", async (req, res) => {
   try {
     const projectId = req.params.id;
-    const { doc } = await loadOpenApiDoc(projectId);
+    const specSource = String(req.query.spec_source || "").trim();
+
+    const { doc } = await loadOpenApiDoc(projectId, {
+      specSourceOverride: specSource || null,
+    });
+
     const endpoints = extractEndpoints(doc);
+
+    console.log("ENDPOINTS COUNT:", endpoints.length);
 
     res.json(
       endpoints.map((e) => ({

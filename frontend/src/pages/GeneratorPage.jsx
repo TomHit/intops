@@ -108,6 +108,7 @@ export default function GeneratorPage({ projectId, onBack }) {
     auth_profile: "device",
     guidance: "",
     ai: false,
+    spec_source: "",
   });
 
   const [run, setRun] = useState({
@@ -126,28 +127,39 @@ export default function GeneratorPage({ projectId, onBack }) {
     [run.testplan],
   );
 
-  async function loadEndpoints() {
+  async function loadEndpoints(specSource = "") {
     if (!projectId) return;
+
     setEndpointsLoading(true);
     setEndpointsErr("");
+
     try {
-      const res = await fetch(
-        `/api/projects/${encodeURIComponent(projectId)}/endpoints`,
-        {
-          headers: { Accept: "application/json" },
-        },
-      );
+      let url = `/api/projects/${encodeURIComponent(projectId)}/endpoints`;
+      if (specSource) {
+        url += `?spec_source=${encodeURIComponent(specSource)}`;
+      }
+
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+      });
+
       const text = await res.text();
       const data = safeJsonParse(text);
-      if (!res.ok) throw new Error(data?.message || `Failed: ${res.status}`);
+
+      if (!res.ok) {
+        throw new Error(
+          data?.message || `Failed to load endpoints (${res.status})`,
+        );
+      }
+
       setEndpoints(Array.isArray(data) ? data : []);
     } catch (e) {
       setEndpointsErr(e.message || String(e));
+      setEndpoints([]);
     } finally {
       setEndpointsLoading(false);
     }
   }
-
   useEffect(() => {
     loadEndpoints();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,6 +186,7 @@ export default function GeneratorPage({ projectId, onBack }) {
       guidance: options.guidance,
       endpoints: endpointRefs,
       ai: !!options.ai,
+      spec_source: options.spec_source || "",
     };
 
     try {
@@ -239,6 +252,13 @@ export default function GeneratorPage({ projectId, onBack }) {
             disabled={endpointsLoading}
           >
             Reload Endpoints
+          </button>
+          <button
+            type="button"
+            style={styles.btn}
+            onClick={() => loadEndpoints(options.spec_source || "")}
+          >
+            Load from Spec URL
           </button>
           <button
             style={styles.btnPrimary}

@@ -58,6 +58,20 @@ export default function GenerationOptions({ options, onChange }) {
           />
         </div>
       </div>
+      <div style={styles.row}>
+        <div style={{ flex: 1 }}>
+          <div style={styles.label}>Spec Source (Swagger / OpenAPI URL)</div>
+          <input
+            style={styles.input}
+            type="text"
+            value={options.spec_source || ""}
+            onChange={(e) =>
+              onChange({ ...options, spec_source: e.target.value })
+            }
+            placeholder="https://app.example.com/openapi.json"
+          />
+        </div>
+      </div>
 
       <div>
         <div style={styles.label}>Additional Guidance (optional)</div>
