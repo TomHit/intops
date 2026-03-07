@@ -128,39 +128,42 @@ function getTopLevelResponseFields(endpoint) {
     : [];
 }
 
-export function makeContractSuccessTemplate(endpoint) {
+function getResponseHeaders(endpoint) {
+  const responses = endpoint?.responses || {};
+  for (const code of Object.keys(responses)) {
+    if (!/^2\d\d$/.test(String(code))) continue;
+    const headers = responses[code]?.headers || {};
+    const names = Object.keys(headers);
+    if (names.length > 0) return names.slice(0, 10);
+  }
+  return [];
+}
+
+function getDocumentedErrorCodes(endpoint) {
+  const responses = endpoint?.responses || {};
+  return Object.keys(responses)
+    .filter((code) => /^[45]\d\d$/.test(String(code)))
+    .slice(0, 10);
+}
+
+function hasRequestBody(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  if (method === "GET" || method === "DELETE") return false;
+  return !!buildRequestBody(endpoint);
+}
+
+function baseCase(endpoint, { idPrefix, title, objective, priority = "P1" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
-  const title = `Verify ${method} ${path} returns a valid success response`;
   const moduleName = buildModuleName(endpoint);
-  const successStatus = getSuccessStatus(endpoint);
-  const contentType = getContentType(endpoint);
-  const topFields = getTopLevelResponseFields(endpoint);
-
-  const expected = [
-    `The API responds with HTTP ${successStatus}.`,
-    `The response body is returned in ${contentType} format.`,
-    "The response structure matches the documented API contract.",
-  ];
-
-  if (topFields.length > 0) {
-    expected.push(
-      `The response contains the expected top-level fields: ${topFields.join(", ")}.`,
-    );
-  } else {
-    expected.push(
-      "The response contains the expected top-level fields defined in the API contract.",
-    );
-  }
 
   return {
-    id: buildCaseId("CONTRACT", endpoint, "001"),
+    id: buildCaseId(idPrefix, endpoint, "001"),
     title,
     module: moduleName,
     test_type: "contract",
-    priority: "P1",
-    objective:
-      "Verify that the endpoint returns a successful response with the expected top-level contract structure.",
+    priority,
+    objective,
     preconditions: [
       "The API base URL is available for the selected environment.",
       "The endpoint is deployed and reachable.",
@@ -170,103 +173,294 @@ export function makeContractSuccessTemplate(endpoint) {
       path_params: buildPathParams(endpoint),
       query_params: buildQueryParams(endpoint),
       headers: buildHeaders(endpoint),
-      request_body:
-        method === "GET" || method === "DELETE"
-          ? null
-          : buildRequestBody(endpoint),
+      request_body: hasRequestBody(endpoint)
+        ? buildRequestBody(endpoint)
+        : null,
     },
     steps: [
       "Open an API client such as Postman or any approved API testing tool.",
       `Select the ${method} method.`,
       `Enter the endpoint URL using the configured base URL and path ${path}.`,
       "Add all required path parameters, query parameters, and headers.",
-      ...(method !== "GET" && method !== "DELETE"
+      ...(hasRequestBody(endpoint)
         ? ["Add a valid request body if the endpoint requires one."]
         : []),
       "Send the request.",
     ],
-    expected_results: expected,
+    expected_results: [],
     api_details: {
       method,
       path,
     },
-    validation_focus: [
-      "HTTP success status",
-      "Response content type",
-      "Top-level response contract",
-      "Presence of expected response fields",
-    ],
+    validation_focus: [],
     references: [],
     needs_review: false,
     review_notes: "",
   };
 }
 
+export function makeContractSuccessTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const successStatus = getSuccessStatus(endpoint);
+  const contentType = getContentType(endpoint);
+  const topFields = getTopLevelResponseFields(endpoint);
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_SUCCESS",
+    title: `Verify ${method} ${path} returns a valid success response`,
+    objective:
+      "Verify that the endpoint returns a successful response with the expected top-level contract structure.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    `The API responds with HTTP ${successStatus}.`,
+    `The response body is returned in ${contentType} format.`,
+    "The response structure matches the documented API contract.",
+    topFields.length > 0
+      ? `The response contains the expected top-level fields: ${topFields.join(", ")}.`
+      : "The response contains the expected top-level fields defined in the API contract.",
+  ];
+
+  tc.validation_focus = [
+    "HTTP success status",
+    "Response content type",
+    "Top-level response contract",
+    "Presence of expected response fields",
+  ];
+
+  return tc;
+}
+
 export function makeContractRequiredFieldsTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
-  const title = `Verify ${method} ${path} returns all mandatory contract fields`;
-  const moduleName = buildModuleName(endpoint);
   const successStatus = getSuccessStatus(endpoint);
   const topFields = getTopLevelResponseFields(endpoint);
 
-  const expected = [
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_REQUIRED_FIELDS",
+    title: `Verify ${method} ${path} returns all mandatory contract fields`,
+    objective:
+      "Verify that the endpoint response includes all mandatory fields defined in the API contract.",
+    priority: "P1",
+  });
+
+  tc.steps.push(
+    "Review the response body and compare it with the documented contract.",
+  );
+
+  tc.expected_results = [
     `The API responds with HTTP ${successStatus}.`,
     "All mandatory response fields defined in the contract are present.",
     "No required field is missing or returned as an unexpected structure.",
+    ...(topFields.length > 0
+      ? [
+          `The tester can confirm the presence of these documented fields: ${topFields.join(", ")}.`,
+        ]
+      : []),
   ];
 
-  if (topFields.length > 0) {
-    expected.push(
-      `The tester can confirm the presence of these documented fields: ${topFields.join(", ")}.`,
-    );
-  }
+  tc.validation_focus = [
+    "Mandatory response fields",
+    "Presence of documented keys",
+    "Contract completeness",
+  ];
 
-  return {
-    id: buildCaseId("CONTRACT_REQUIRED_FIELDS", endpoint, "001"),
-    title,
-    module: moduleName,
-    test_type: "contract",
-    priority: "P1",
+  return tc;
+}
+
+export function makeContractContentTypeTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const successStatus = getSuccessStatus(endpoint);
+  const contentType = getContentType(endpoint);
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_CONTENT_TYPE",
+    title: `Verify ${method} ${path} returns the documented response content type`,
     objective:
-      "Verify that the endpoint response includes all mandatory fields defined in the API contract.",
-    preconditions: [
-      "The API base URL is available for the selected environment.",
-      "The endpoint is deployed and reachable.",
-      "Required authentication or access credentials are available if applicable.",
-    ],
-    test_data: {
-      path_params: buildPathParams(endpoint),
-      query_params: buildQueryParams(endpoint),
-      headers: buildHeaders(endpoint),
-      request_body:
-        method === "GET" || method === "DELETE"
-          ? null
-          : buildRequestBody(endpoint),
-    },
-    steps: [
-      "Open an API client such as Postman or any approved API testing tool.",
-      `Select the ${method} method.`,
-      `Enter the endpoint URL using the configured base URL and path ${path}.`,
-      "Add all required path parameters, query parameters, and headers.",
-      ...(method !== "GET" && method !== "DELETE"
-        ? ["Add a valid request body if the endpoint requires one."]
-        : []),
-      "Send the request.",
-      "Review the response body and compare it with the documented contract.",
-    ],
-    expected_results: expected,
-    api_details: {
-      method,
-      path,
-    },
-    validation_focus: [
-      "Mandatory response fields",
-      "Presence of documented keys",
-      "Contract completeness",
-    ],
-    references: [],
-    needs_review: false,
-    review_notes: "",
-  };
+      "Verify that the endpoint returns the response in the documented content type.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    `The API responds with HTTP ${successStatus}.`,
+    `The response Content-Type is ${contentType}.`,
+    "The response media type matches the API contract.",
+  ];
+
+  tc.validation_focus = [
+    "Response content type",
+    "Contract media type compliance",
+  ];
+
+  return tc;
+}
+
+export function makeContractResponseHeadersTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const successStatus = getSuccessStatus(endpoint);
+  const headerNames = getResponseHeaders(endpoint);
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_RESPONSE_HEADERS",
+    title: `Verify ${method} ${path} returns documented response headers`,
+    objective:
+      "Verify that the endpoint returns the response headers documented in the API contract.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    `The API responds with HTTP ${successStatus}.`,
+    "The response contains the documented response headers.",
+    ...(headerNames.length > 0
+      ? [
+          `The tester can confirm the presence of these response headers: ${headerNames.join(", ")}.`,
+        ]
+      : ["The response headers match the documented contract behavior."]),
+  ];
+
+  tc.validation_focus = [
+    "Response header validation",
+    "Contract header compliance",
+  ];
+
+  return tc;
+}
+
+export function makeContractQueryParamsTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const requiredQuery = getRequiredQueryParams(endpoint).map((p) => p.name);
+  const optionalQuery = getOptionalQueryParams(endpoint).map((p) => p.name);
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_QUERY_PARAMS",
+    title: `Verify ${method} ${path} accepts documented query parameters`,
+    objective:
+      "Verify that the endpoint accepts and processes documented query parameters correctly.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    "The endpoint accepts documented query parameters without contract errors.",
+    ...(requiredQuery.length > 0
+      ? [
+          `Required query parameters are supported: ${requiredQuery.join(", ")}.`,
+        ]
+      : []),
+    ...(optionalQuery.length > 0
+      ? [
+          `Optional query parameters are supported when provided: ${optionalQuery.join(", ")}.`,
+        ]
+      : []),
+    "The request is processed according to the API contract.",
+  ];
+
+  tc.validation_focus = [
+    "Query parameter contract",
+    "Required and optional query parameter handling",
+  ];
+
+  return tc;
+}
+
+export function makeContractPathParamsTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const pathParams = Object.keys(buildPathParams(endpoint));
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_PATH_PARAMS",
+    title: `Verify ${method} ${path} accepts documented path parameters`,
+    objective:
+      "Verify that the endpoint accepts and processes documented path parameters correctly.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    "The endpoint accepts the documented path parameters.",
+    ...(pathParams.length > 0
+      ? [
+          `The tester can confirm the path parameters used by this endpoint: ${pathParams.join(", ")}.`,
+        ]
+      : []),
+    "The request is processed according to the documented path contract.",
+  ];
+
+  tc.validation_focus = [
+    "Path parameter contract",
+    "Resource identifier handling",
+  ];
+
+  return tc;
+}
+
+export function makeContractRequestBodyTemplate(endpoint) {
+  const method = String(endpoint?.method || "POST").toUpperCase();
+  const path = endpoint?.path || "/";
+  const requestBody = buildRequestBody(endpoint);
+  const bodyFields = requestBody ? Object.keys(requestBody) : [];
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_REQUEST_BODY",
+    title: `Verify ${method} ${path} accepts documented request body fields`,
+    objective:
+      "Verify that the endpoint accepts a request body matching the documented API contract.",
+    priority: "P1",
+  });
+
+  tc.steps.push(
+    "Review the request body fields sent in the request and compare them with the documented request contract.",
+  );
+
+  tc.expected_results = [
+    "The request body structure is accepted by the API.",
+    ...(bodyFields.length > 0
+      ? [
+          `The tester can confirm the documented request body fields: ${bodyFields.join(", ")}.`,
+        ]
+      : ["The request body matches the documented API contract."]),
+    "No contract-related request body error occurs for valid input.",
+  ];
+
+  tc.validation_focus = [
+    "Request body contract",
+    "Documented request body fields",
+  ];
+
+  return tc;
+}
+
+export function makeContractErrorResponseTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const errorCodes = getDocumentedErrorCodes(endpoint);
+
+  const tc = baseCase(endpoint, {
+    idPrefix: "CONTRACT_ERROR_RESPONSE",
+    title: `Verify ${method} ${path} documents and returns consistent error responses`,
+    objective:
+      "Verify that the endpoint exposes and follows documented error response behavior.",
+    priority: "P2",
+  });
+
+  tc.expected_results = [
+    "The API defines error responses consistently in the contract.",
+    ...(errorCodes.length > 0
+      ? [`The documented error status codes include: ${errorCodes.join(", ")}.`]
+      : ["Documented error responses are available where applicable."]),
+    "Error response behavior is consistent with the API contract.",
+  ];
+
+  tc.validation_focus = ["Error response contract", "Documented error codes"];
+
+  tc.needs_review = true;
+  tc.review_notes =
+    "Review the exact triggering conditions and expected payload structure for documented error responses.";
+
+  return tc;
 }

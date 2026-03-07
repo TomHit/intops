@@ -8,7 +8,15 @@ import {
   makeSchemaRequestBodyTemplate,
 } from "../templates/schemaTemplates.js";
 
-import { makeNegativeMissingRequiredQueryTemplate } from "../templates/negativeTemplates.js";
+import {
+  makeNegativeMissingRequiredQueryTemplate,
+  makeNegativeMissingRequiredPathTemplate,
+  makeNegativeUnsupportedMethodTemplate,
+  makeNegativeInvalidContentTypeTemplate,
+  makeNegativeMalformedJsonTemplate,
+  makeNegativeEmptyBodyTemplate,
+  makeNegativeResourceNotFoundTemplate,
+} from "../templates/negativeTemplates.js";
 import { makeAuthMissingCredentialsTemplate } from "../templates/authTemplates.js";
 
 import { loadRuleCatalog } from "../rules/loadRuleCatalog.js";
@@ -76,6 +84,59 @@ function buildCaseFromCsvRule(rule, endpoint) {
   }
 
   if (category === "negative") {
+    if (
+      ruleId === "NEGATIVE_001" ||
+      appliesWhen === "endpoint_has_required_query"
+    ) {
+      return annotateCase(
+        makeNegativeMissingRequiredQueryTemplate(endpoint),
+        rule,
+      );
+    }
+
+    if (
+      ruleId === "NEGATIVE_002" ||
+      appliesWhen === "endpoint_has_path_params"
+    ) {
+      return annotateCase(
+        makeNegativeMissingRequiredPathTemplate(endpoint),
+        rule,
+      );
+    }
+
+    if (ruleId === "NEGATIVE_018" || appliesWhen === "endpoint_exists") {
+      return annotateCase(
+        makeNegativeUnsupportedMethodTemplate(endpoint),
+        rule,
+      );
+    }
+
+    if (
+      ruleId === "NEGATIVE_019" ||
+      ruleId === "NEGATIVE_107" ||
+      appliesWhen === "request_body_schema_exists"
+    ) {
+      return annotateCase(
+        makeNegativeInvalidContentTypeTemplate(endpoint),
+        rule,
+      );
+    }
+
+    if (ruleId === "NEGATIVE_020" || ruleId === "NEGATIVE_113") {
+      return annotateCase(makeNegativeMalformedJsonTemplate(endpoint), rule);
+    }
+
+    if (ruleId === "NEGATIVE_021" || appliesWhen === "request_body_required") {
+      return annotateCase(makeNegativeEmptyBodyTemplate(endpoint), rule);
+    }
+
+    if (
+      ruleId === "NEGATIVE_024" ||
+      appliesWhen === "endpoint_has_resource_identifier"
+    ) {
+      return annotateCase(makeNegativeResourceNotFoundTemplate(endpoint), rule);
+    }
+
     if (appliesWhen === "endpoint_requires_auth") {
       return annotateCase(makeAuthMissingCredentialsTemplate(endpoint), rule);
     }
@@ -85,7 +146,6 @@ function buildCaseFromCsvRule(rule, endpoint) {
       rule,
     );
   }
-
   return null;
 }
 

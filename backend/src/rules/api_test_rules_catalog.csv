@@ -4,7 +4,6 @@ SMOKE_002,smoke,Success smoke for GET,method_is_get_and_has_2xx_response,Verify 
 SMOKE_003,smoke,Success smoke for write endpoint,method_is_write_and_has_2xx_response,Verify write endpoint accepts a valid request,P0,critical,POST|PUT|PATCH,endpoint,Fast smoke check for write APIs
 SMOKE_004,smoke,Authenticated smoke,endpoint_requires_auth,Verify authenticated endpoint responds with valid credentials,P0,critical,,endpoint,Checks basic auth flow
 SMOKE_005,smoke,Minimal payload smoke,request_body_schema_exists,Verify endpoint accepts minimal valid payload,P1,major,POST|PUT|PATCH,request_body,Use smallest valid request body
-,,,,,,,,,
 CONTRACT_001,contract,Success response contract,endpoint_has_2xx_response,Verify endpoint returns documented success response,P0,critical,,endpoint,Core success contract
 CONTRACT_002,contract,Specific status code contract,endpoint_has_documented_success_status,Verify endpoint returns documented success status code,P0,critical,,endpoint,Checks correct documented success code
 CONTRACT_003,contract,Content type contract,response_has_content_type,Verify response content type matches API contract,P1,major,,response,Ensures documented content type
@@ -20,7 +19,6 @@ CONTRACT_012,contract,Documented error code contract,endpoint_has_documented_4xx
 CONTRACT_013,contract,Operation-specific contract,endpoint_has_summary_or_operationid,Verify endpoint behavior matches operation definition,P2,minor,,endpoint,Maps output to operation metadata
 CONTRACT_014,contract,Authentication header contract,endpoint_requires_auth,Verify endpoint requires documented authentication mechanism,P0,critical,,security,Security contract check
 CONTRACT_015,contract,Request content type contract,request_body_schema_exists,Verify request content type matches documented contract,P1,major,POST|PUT|PATCH,request_body,Checks request content-type expectations
-,,,,,,,,,
 SCHEMA_001,schema,Response schema validation,response_schema_exists,Verify response matches documented schema,P0,critical,,response,Primary schema rule
 SCHEMA_002,schema,Required fields schema,response_has_required_fields,Verify all required schema fields exist in response,P0,critical,,response,Checks required fields
 SCHEMA_003,schema,Response field type validation,response_schema_exists,Verify response field data types match schema,P1,major,,response,Checks primitive types
@@ -41,7 +39,6 @@ SCHEMA_017,schema,oneOf/anyOf/allOf request validation,request_body_schema_has_c
 SCHEMA_018,schema,Read-only field validation,response_schema_has_readonly,Verify read-only fields appear only in responses,P2,minor,,response,Useful for resource APIs
 SCHEMA_019,schema,Write-only field validation,request_body_schema_has_writeonly,Verify write-only fields are accepted but not exposed in response,P2,minor,POST|PUT|PATCH,request_body,Useful for secrets/passwords
 SCHEMA_020,schema,Default value behavior,schema_has_defaults,Verify schema default behavior is consistent,P3,minor,,schema,Optional advanced check
-,,,,,,,,,
 NEGATIVE_001,negative,Missing required query parameter,endpoint_has_required_query,Verify API rejects request with missing required query parameter,P1,major,,query_param,Very common negative case
 NEGATIVE_002,negative,Missing required path parameter,endpoint_has_path_params,Verify API rejects malformed request with missing path parameter,P1,major,,path_param,Checks malformed path behavior
 NEGATIVE_003,negative,Missing required request body field,request_body_has_required_fields,Verify API rejects request with missing required body field,P1,major,POST|PUT|PATCH,request_body,Important write negative
@@ -72,27 +69,6 @@ NEGATIVE_027,negative,Invalid pagination parameter,endpoint_has_pagination_param
 NEGATIVE_028,negative,Invalid sorting parameter,endpoint_has_sorting_params,Verify API rejects unsupported sorting parameter values,P2,minor,GET,query_param,Useful for search/list APIs
 NEGATIVE_029,negative,Invalid filter parameter,endpoint_has_filter_params,Verify API rejects unsupported filter parameter values,P2,minor,GET,query_param,Useful for filterable APIs
 NEGATIVE_030,negative,Boundary date validation,schema_has_date_or_datetime_fields,Verify API rejects invalid or impossible date values,P2,minor,,schema,Useful for scheduling/reporting APIs
-NEGATIVE_101,negative,Invalid query parameter type,query_params_have_typed_schema,GET|POST|PUT|PATCH,Send wrong datatype for query parameter
-NEGATIVE_102,negative,Invalid enum value,response_or_request_schema_has_enum,GET|POST|PUT|PATCH,Send value outside allowed enum list
-NEGATIVE_103,negative,Boundary value testing,schema_has_numeric_constraints,POST|PUT|PATCH,Test min and max limits
-NEGATIVE_104,negative,Numeric overflow,schema_has_numeric_constraints,POST|PUT|PATCH,Send extremely large number
-NEGATIVE_105,negative,Very long string input,schema_has_string_constraints,POST|PUT|PATCH,Send string larger than max length
-NEGATIVE_106,negative,Empty body when body required,request_body_required,POST|PUT|PATCH,Send empty JSON body
-NEGATIVE_107,negative,Invalid content type header,request_body_schema_exists,POST|PUT|PATCH,Use wrong Content-Type header
-NEGATIVE_108,negative,Unsupported HTTP method,endpoint_exists,GET|POST|PUT|PATCH|DELETE,Call endpoint using unsupported method
-NEGATIVE_109,negative,Missing authentication,endpoint_requires_auth,GET|POST|PUT|PATCH|DELETE,Call endpoint without auth header
-NEGATIVE_110,negative,Invalid authentication token,endpoint_requires_auth,GET|POST|PUT|PATCH|DELETE,Send invalid or expired token
-NEGATIVE_111,negative,Missing required path parameter,endpoint_has_path_params,GET|PUT|PATCH|DELETE,Call endpoint without path parameter
-NEGATIVE_112,negative,Unexpected additional property,request_body_schema_controls_additional_properties,POST|PUT|PATCH,Send unknown JSON field
-NEGATIVE_113,negative,Invalid JSON body format,request_body_schema_exists,POST|PUT|PATCH,Send malformed JSON
-NEGATIVE_114,negative,Duplicate resource creation,endpoint_can_conflict,POST,Create same resource twice
-NEGATIVE_115,negative,Rate limit exceeded,endpoint_has_rate_limit_contract,GET|POST|PUT|PATCH|DELETE,Send many requests quickly
-NEGATIVE_116,negative,Pagination overflow,endpoint_has_pagination_params,GET,Request extremely large page
-NEGATIVE_117,negative,Invalid sorting parameter,endpoint_has_sorting_params,GET,Send invalid sort field
-NEGATIVE_118,negative,Invalid filter parameter,endpoint_has_filter_params,GET,Send unsupported filter value
-NEGATIVE_119,negative,Null value in required field,request_body_has_required_fields,POST|PUT|PATCH,Send null for required field
-NEGATIVE_120,negative,Schema composition violation,response_schema_has_composition,POST|PUT|PATCH,Send payload violating oneOf/anyOf
-,,,,,,,,,
 REGRESSION_001,regression,Baseline regression for GET,method_is_get_and_has_2xx_response,Verify GET endpoint baseline behavior remains unchanged,P1,major,GET,endpoint,Regression baseline for reads
 REGRESSION_002,regression,Baseline regression for write endpoint,method_is_write_and_has_2xx_response,Verify write endpoint baseline behavior remains unchanged,P1,major,POST|PUT|PATCH|DELETE,endpoint,Regression baseline for writes
 REGRESSION_003,regression,Regression for authenticated endpoint,endpoint_requires_auth,Verify authenticated endpoint behavior remains unchanged,P1,major,,security,Protects auth-required APIs
@@ -103,3 +79,14 @@ REGRESSION_007,regression,Regression for update endpoint,method_is_put_or_patch_
 REGRESSION_008,regression,Regression for delete endpoint,method_is_delete,Verify delete endpoint behavior remains stable,P1,major,DELETE,endpoint,Common delete regression
 REGRESSION_009,regression,Regression for pagination behavior,endpoint_has_pagination_params,Verify pagination behavior remains stable,P2,minor,GET,query_param,Important for list endpoints
 REGRESSION_010,regression,Regression for sort/filter behavior,endpoint_has_sorting_or_filtering_params,Verify sort and filter behavior remains stable,P2,minor,GET,query_param,Useful for search APIs
+NEGATIVE_103,negative,Boundary value testing,schema_has_numeric_constraints,Verify API rejects boundary-breaking numeric values,P1,major,POST|PUT|PATCH,schema,Test min and max limits
+NEGATIVE_104,negative,Numeric overflow,schema_has_numeric_constraints,Verify API rejects extremely large numeric values,P1,major,POST|PUT|PATCH,schema,Send extremely large number
+NEGATIVE_105,negative,Very long string input,schema_has_string_constraints,Verify API rejects overly long string input,P1,major,POST|PUT|PATCH,schema,Send string larger than max length
+NEGATIVE_107,negative,Invalid content type header,request_body_schema_exists,Verify API rejects invalid Content-Type header,P1,major,POST|PUT|PATCH,request_body,Use wrong Content-Type header
+NEGATIVE_112,negative,Unexpected additional property,request_body_schema_controls_additional_properties,Verify API rejects unexpected additional request fields,P1,major,POST|PUT|PATCH,request_body,Send unknown JSON field
+NEGATIVE_113,negative,Invalid JSON body format,request_body_schema_exists,Verify API rejects malformed JSON payload,P1,major,POST|PUT|PATCH,request_body,Send malformed JSON
+NEGATIVE_114,negative,Duplicate resource creation,endpoint_can_conflict,Verify API rejects duplicate resource creation,P1,major,POST,request_body,Create same resource twice
+NEGATIVE_115,negative,Rate limit exceeded,endpoint_has_rate_limit_contract,Verify API returns correct response when rate limit is exceeded,P1,major,GET|POST|PUT|PATCH|DELETE,endpoint,Send many requests quickly
+NEGATIVE_116,negative,Pagination overflow,endpoint_has_pagination_params,Verify API rejects pagination values beyond supported range,P2,minor,GET,query_param,Request extremely large page
+NEGATIVE_119,negative,Null value in required field,request_body_has_required_fields,Verify API rejects null for required fields,P1,major,POST|PUT|PATCH,request_body,Send null for required field
+NEGATIVE_120,negative,Schema composition violation,response_schema_has_composition,Verify API rejects payload violating composed schema rules,P1,major,POST|PUT|PATCH,schema,Send payload violating oneOf/anyOf
