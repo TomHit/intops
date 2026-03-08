@@ -1,15 +1,3 @@
-function slug(value) {
-  return String(value || "")
-    .replace(/[{}]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-}
-
-function buildCaseId(prefix, endpoint, seq = "001") {
-  return `TC_${prefix}_${slug(endpoint?.method)}_${slug(endpoint?.path)}_${seq}`;
-}
-
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
   if (tags.length > 0) return `${tags[0]} API`;
@@ -183,13 +171,13 @@ function hasRequestBody(endpoint) {
   return !!buildRequestBody(endpoint);
 }
 
-function baseCase(endpoint, { idPrefix, title, objective, priority = "P1" }) {
+function baseCase(endpoint, { title, objective, priority = "P1" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const moduleName = buildModuleName(endpoint);
 
   return {
-    id: buildCaseId(idPrefix, endpoint, "001"),
+    id: "",
     title,
     module: moduleName,
     test_type: "schema",
@@ -239,7 +227,6 @@ export function makeSchemaResponseTemplate(endpoint) {
   const allProps = getSchemaProperties(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_RESPONSE",
     title: `Verify ${method} ${path} response matches the documented schema`,
     objective:
       "Verify that the response body complies with the documented response schema, including mandatory fields and structure.",
@@ -283,7 +270,6 @@ export function makeSchemaRequiredFieldsTemplate(endpoint) {
   const requiredFields = getSchemaRequiredFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_REQUIRED_FIELDS",
     title: `Verify ${method} ${path} includes all required schema fields`,
     objective:
       "Verify that all required fields defined in the response schema are present in the API response.",
@@ -318,7 +304,6 @@ export function makeSchemaFieldTypesTemplate(endpoint) {
   const props = getSchemaProperties(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_FIELD_TYPES",
     title: `Verify ${method} ${path} response field types match the schema`,
     objective:
       "Verify that response fields follow the data types documented in the response schema.",
@@ -352,7 +337,6 @@ export function makeSchemaEnumTemplate(endpoint) {
   const enumFields = getSchemaEnumFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_ENUM",
     title: `Verify ${method} ${path} returns only documented enum values`,
     objective:
       "Verify that enum fields in the response contain only documented allowed values.",
@@ -383,7 +367,6 @@ export function makeSchemaNestedObjectsTemplate(endpoint) {
   const nestedFields = getSchemaNestedObjectFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_NESTED_OBJECTS",
     title: `Verify ${method} ${path} nested objects follow the documented schema`,
     objective:
       "Verify that nested objects in the response body follow the documented schema structure.",
@@ -417,7 +400,6 @@ export function makeSchemaArrayTemplate(endpoint) {
   const arrayFields = getSchemaArrayFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_ARRAY_ITEMS",
     title: `Verify ${method} ${path} array items follow the documented schema`,
     objective:
       "Verify that array fields in the response follow the documented item structure.",
@@ -448,7 +430,6 @@ export function makeSchemaFormatTemplate(endpoint) {
   const formatFields = getSchemaFormatFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_FORMAT",
     title: `Verify ${method} ${path} formatted fields follow the documented schema format`,
     objective:
       "Verify that formatted string fields such as date-time, email, UUID, or URI follow the documented schema format.",
@@ -482,7 +463,6 @@ export function makeSchemaNumericConstraintsTemplate(endpoint) {
   const fields = getSchemaNumericConstraintFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_NUMERIC_CONSTRAINTS",
     title: `Verify ${method} ${path} numeric fields respect schema constraints`,
     objective:
       "Verify that numeric response fields respect documented minimum and maximum constraints.",
@@ -513,7 +493,6 @@ export function makeSchemaStringConstraintsTemplate(endpoint) {
   const fields = getSchemaStringConstraintFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_STRING_CONSTRAINTS",
     title: `Verify ${method} ${path} string fields respect schema length constraints`,
     objective:
       "Verify that string response fields respect documented minimum and maximum length constraints.",
@@ -547,7 +526,6 @@ export function makeSchemaPatternTemplate(endpoint) {
   const fields = getSchemaPatternFields(schema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_PATTERN",
     title: `Verify ${method} ${path} pattern-constrained fields follow the schema`,
     objective:
       "Verify that pattern-constrained response fields follow the documented regex or pattern rules.",
@@ -578,7 +556,6 @@ export function makeSchemaCompositionTemplate(endpoint) {
   const requestSchema = getRequestSchema(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_COMPOSITION",
     title: `Verify ${method} ${path} composed schema rules are respected`,
     objective:
       "Verify that composed schema definitions such as oneOf, anyOf, or allOf are respected by the API structure.",
@@ -620,7 +597,6 @@ export function makeSchemaRequestBodyTemplate(endpoint) {
   const props = getSchemaProperties(requestSchema);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "SCHEMA_REQUEST_BODY",
     title: `Verify ${method} ${path} accepts a request body that matches the documented schema`,
     objective:
       "Verify that the request body used for the endpoint follows the documented request schema and is accepted by the API.",

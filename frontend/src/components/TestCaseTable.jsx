@@ -20,7 +20,7 @@ export default function TestCaseTable({ rows, onRowClick }) {
         <div
           style={{
             ...styles.head,
-            gridTemplateColumns: `220px 2fr 1.2fr 100px 90px 90px 180px 180px 70px 110px 120px 130px 180px`,
+            gridTemplateColumns: `180px 2.4fr 1.2fr 100px 90px 90px 180px 180px 70px 110px 120px 130px 180px`,
           }}
         >
           {TEST_CASE_COLUMNS.map((col) => (
@@ -36,7 +36,7 @@ export default function TestCaseTable({ rows, onRowClick }) {
               key={`${r.suite_id}-${r.id}`}
               style={{
                 ...styles.row,
-                gridTemplateColumns: `220px 2fr 1.2fr 100px 90px 90px 180px 180px 70px 110px 120px 130px 180px`,
+                gridTemplateColumns: `180px 2.4fr 1.2fr 100px 90px 90px 180px 180px 70px 110px 120px 130px 180px`,
               }}
               onClick={() => onRowClick?.(r)}
               role="button"
@@ -67,13 +67,16 @@ export default function TestCaseTable({ rows, onRowClick }) {
                   <div
                     key={col.key}
                     title={String(value ?? "")}
-                    style={
-                      col.key === "id" || col.key === "path"
+                    style={{
+                      ...(col.key === "id" || col.key === "path"
                         ? styles.mono
-                        : undefined
-                    }
+                        : {}),
+                      ...(col.key === "id" ? styles.idCell : {}),
+                      ...(col.key === "title" ? styles.titleCell : {}),
+                      ...styles.cell,
+                    }}
                   >
-                    {shortText(value, 70)}
+                    {shortText(value, col.key === "id" ? 36 : 70)}
                   </div>
                 );
               })}
@@ -117,9 +120,27 @@ const styles = {
     fontSize: 13,
     minWidth: 2200,
   },
+  cell: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   mono: {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: 12,
+  },
+  idCell: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  titleCell: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   badge: {
     display: "inline-block",

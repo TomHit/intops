@@ -1,15 +1,3 @@
-function slug(value) {
-  return String(value || "")
-    .replace(/[{}]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-}
-
-function buildCaseId(prefix, endpoint, seq = "001") {
-  return `TC_${prefix}_${slug(endpoint?.method)}_${slug(endpoint?.path)}_${seq}`;
-}
-
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
   if (tags.length > 0) return `${tags[0]} API`;
@@ -152,13 +140,13 @@ function hasRequestBody(endpoint) {
   return !!buildRequestBody(endpoint);
 }
 
-function baseCase(endpoint, { idPrefix, title, objective, priority = "P1" }) {
+function baseCase(endpoint, { title, objective, priority = "P1" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const moduleName = buildModuleName(endpoint);
 
   return {
-    id: buildCaseId(idPrefix, endpoint, "001"),
+    id: "",
     title,
     module: moduleName,
     test_type: "contract",
@@ -207,7 +195,6 @@ export function makeContractSuccessTemplate(endpoint) {
   const topFields = getTopLevelResponseFields(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_SUCCESS",
     title: `Verify ${method} ${path} returns a valid success response`,
     objective:
       "Verify that the endpoint returns a successful response with the expected top-level contract structure.",
@@ -240,7 +227,6 @@ export function makeContractRequiredFieldsTemplate(endpoint) {
   const topFields = getTopLevelResponseFields(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_REQUIRED_FIELDS",
     title: `Verify ${method} ${path} returns all mandatory contract fields`,
     objective:
       "Verify that the endpoint response includes all mandatory fields defined in the API contract.",
@@ -278,7 +264,6 @@ export function makeContractContentTypeTemplate(endpoint) {
   const contentType = getContentType(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_CONTENT_TYPE",
     title: `Verify ${method} ${path} returns the documented response content type`,
     objective:
       "Verify that the endpoint returns the response in the documented content type.",
@@ -306,7 +291,6 @@ export function makeContractResponseHeadersTemplate(endpoint) {
   const headerNames = getResponseHeaders(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_RESPONSE_HEADERS",
     title: `Verify ${method} ${path} returns documented response headers`,
     objective:
       "Verify that the endpoint returns the response headers documented in the API contract.",
@@ -338,7 +322,6 @@ export function makeContractQueryParamsTemplate(endpoint) {
   const optionalQuery = getOptionalQueryParams(endpoint).map((p) => p.name);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_QUERY_PARAMS",
     title: `Verify ${method} ${path} accepts documented query parameters`,
     objective:
       "Verify that the endpoint accepts and processes documented query parameters correctly.",
@@ -374,7 +357,6 @@ export function makeContractPathParamsTemplate(endpoint) {
   const pathParams = Object.keys(buildPathParams(endpoint));
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_PATH_PARAMS",
     title: `Verify ${method} ${path} accepts documented path parameters`,
     objective:
       "Verify that the endpoint accepts and processes documented path parameters correctly.",
@@ -406,7 +388,6 @@ export function makeContractRequestBodyTemplate(endpoint) {
   const bodyFields = requestBody ? Object.keys(requestBody) : [];
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_REQUEST_BODY",
     title: `Verify ${method} ${path} accepts documented request body fields`,
     objective:
       "Verify that the endpoint accepts a request body matching the documented API contract.",
@@ -441,7 +422,6 @@ export function makeContractErrorResponseTemplate(endpoint) {
   const errorCodes = getDocumentedErrorCodes(endpoint);
 
   const tc = baseCase(endpoint, {
-    idPrefix: "CONTRACT_ERROR_RESPONSE",
     title: `Verify ${method} ${path} documents and returns consistent error responses`,
     objective:
       "Verify that the endpoint exposes and follows documented error response behavior.",

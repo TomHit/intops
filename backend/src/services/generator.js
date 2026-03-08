@@ -5,6 +5,7 @@ import { getAIProvider } from "../providers/ai/index.js";
 import { generateCasesForEndpoints } from "./templateEngine.js";
 import { validateTestPlanOrThrow } from "./schemaValidate.js";
 import { buildReport } from "./report.js";
+import { createCaseIdGenerator } from "./caseIdGenerator.js";
 
 const SCHEMA_SHAPE_GUIDE = `
 Return ONLY JSON.
@@ -34,22 +35,206 @@ function tryExtractJsonObject(text) {
   return safeParseJson(text.slice(first, last + 1));
 }
 
+function endpointKey(method, path) {
+  return `${String(method || "GET").toUpperCase()} ${String(path || "")}`;
+}
+
+function buildEndpointMap(endpoints) {
+  const map = new Map();
+  for (const e of endpoints || []) {
+    map.set(endpointKey(e.method, e.path), e);
+  }
+  return map;
+}
+
+function inferCaseEndpoint(testCase, suiteEndpoints, endpointMap) {
+  const method =
+    testCase?.api_details?.method ||
+    testCase?.method ||
+    testCase?.request?.method ||
+    "GET";
+
+  const path =
+    testCase?.api_details?.path ||
+    testCase?.path ||
+    testCase?.request?.path ||
+    "";
+
+  if (path) {
+    const exact = endpointMap.get(endpointKey(method, path));
+    if (exact) return exact;
+  }
+
+  const suiteList = Array.isArray(suiteEndpoints) ? suiteEndpoints : [];
+  if (suiteList.length === 1) {
+    const only = suiteList[0];
+    return (
+      endpointMap.get(endpointKey(only.method, only.path)) || {
+        method: only.method,
+        path: only.path,
+        tags: [],
+      }
+    );
+  }
+
+  return {
+    method: String(method || "GET").toUpperCase(),
+    path: String(path || "/"),
+    tags: [],
+  };
+}
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function enrichSuitesWithCaseIds(plan, allEndpoints) {
+  if (!plan || !Array.isArray(plan.suites)) return plan;
+
+  const endpointMap = buildEndpointMap(allEndpoints);
+  const gen = createCaseIdGenerator(allEndpoints);
+
+  for (const suite of plan.suites) {
+    suite.endpoints = ensureArray(suite.endpoints);
+    suite.cases = ensureArray(suite.cases);
+
+    const perEndpointSeq = new Map();
+
+    suite.cases = suite.cases.map((testCase) => {
+      const endpoint = inferCaseEndpoint(
+        testCase,
+        suite.endpoints,
+        endpointMap,
+      );
+      const epKey = endpointKey(endpoint.method, endpoint.path);
+      const nextSeq = (perEndpointSeq.get(epKey) || 0) + 1;
+      perEndpointSeq.set(epKey, nextSeq);
+
+      const scenarioName =
+        testCase?.title ||
+        testCase?.objective ||
+        testCase?.name ||
+        testCase?.scenario ||
+        "";
+
+      const meta = gen.buildCaseMeta(endpoint, nextSeq, scenarioName);
+
+      const { scenario, ...rest } = testCase || {};
+
+      return {
+        ...rest,
+        id: rest?.id || meta.id,
+        title: rest?.title || meta.title,
+        module:
+          rest?.module ||
+          (Array.isArray(endpoint?.tags) && endpoint.tags.length > 0
+            ? endpoint.tags[0]
+            : endpoint?.path?.split("/").filter(Boolean)[0] || "Default"),
+        api_details: {
+          method: String(
+            rest?.api_details?.method || endpoint?.method || "GET",
+          ).toUpperCase(),
+          path: rest?.api_details?.path || endpoint?.path || "/",
+        },
+        preconditions: ensureArray(rest?.preconditions),
+        steps: ensureArray(rest?.steps),
+        expected_results: ensureArray(rest?.expected_results),
+        validation_focus: ensureArray(rest?.validation_focus),
+        references: ensureArray(rest?.references),
+        review_notes:
+          typeof rest?.review_notes === "string" ? rest.review_notes : "",
+      };
+    });
+  }
+
+  return plan;
+}
+
 /**
  * Build deterministic plan from template engine output
  */
-async function buildDeterministicTestPlan({ project, options, endpoints }) {
+async function buildDeterministicTestPlan({
+  project,
+  options,
+  endpoints,
+  caseIdGen,
+}) {
   const endpointRefs = endpoints.map((e) => ({
     method: String(e.method).toUpperCase(),
     path: e.path,
   }));
 
-  const cases = await generateCasesForEndpoints(endpoints, options);
+  let cases = await generateCasesForEndpoints(endpoints, options);
 
   console.log(
     "DETERMINISTIC CASES COUNT:",
     Array.isArray(cases) ? cases.length : "not-array",
   );
   console.dir(cases, { depth: null });
+
+  if (Array.isArray(cases)) {
+    const perEndpointSeq = new Map();
+
+    cases = cases.map((testCase) => {
+      const method =
+        testCase?.api_details?.method ||
+        testCase?.method ||
+        endpoints?.[0]?.method ||
+        "GET";
+      const path =
+        testCase?.api_details?.path ||
+        testCase?.path ||
+        endpoints?.[0]?.path ||
+        "/";
+
+      const endpoint = endpoints.find(
+        (e) => endpointKey(e.method, e.path) === endpointKey(method, path),
+      ) || {
+        method: String(method).toUpperCase(),
+        path,
+        tags: [],
+      };
+
+      const epKey = endpointKey(endpoint.method, endpoint.path);
+      const nextSeq = (perEndpointSeq.get(epKey) || 0) + 1;
+      perEndpointSeq.set(epKey, nextSeq);
+
+      const scenarioName =
+        testCase?.title ||
+        testCase?.objective ||
+        testCase?.name ||
+        testCase?.scenario ||
+        "";
+
+      const meta = caseIdGen.buildCaseMeta(endpoint, nextSeq, scenarioName);
+
+      const { scenario, ...rest } = testCase || {};
+
+      return {
+        ...rest,
+        id: rest?.id || meta.id,
+        title: rest?.title || meta.title,
+        module:
+          rest?.module ||
+          (Array.isArray(endpoint?.tags) && endpoint.tags.length > 0
+            ? endpoint.tags[0]
+            : endpoint?.path?.split("/").filter(Boolean)[0] || "Default"),
+        api_details: {
+          method: String(
+            rest?.api_details?.method || endpoint?.method || "GET",
+          ).toUpperCase(),
+          path: rest?.api_details?.path || endpoint?.path || "/",
+        },
+        preconditions: ensureArray(rest?.preconditions),
+        steps: ensureArray(rest?.steps),
+        expected_results: ensureArray(rest?.expected_results),
+        validation_focus: ensureArray(rest?.validation_focus),
+        references: ensureArray(rest?.references),
+        review_notes:
+          typeof rest?.review_notes === "string" ? rest.review_notes : "",
+      };
+    });
+  }
 
   const suites =
     Array.isArray(cases) && cases.length > 0
@@ -149,6 +334,8 @@ export async function generateTestPlan(payload) {
     schemaText: SCHEMA_SHAPE_GUIDE,
   });
 
+  const caseIdGen = createCaseIdGenerator(allEndpoints);
+
   // ------------------------------
   // Deterministic-first baseline
   // ------------------------------
@@ -158,6 +345,7 @@ export async function generateTestPlan(payload) {
     project: projectBlock,
     options,
     endpoints: endpointRecords,
+    caseIdGen,
   });
 
   // ------------------------------
@@ -230,6 +418,8 @@ export async function generateTestPlan(payload) {
   obj.project.auth_vars = Array.isArray(obj.project.auth_vars)
     ? obj.project.auth_vars
     : projectBlock.auth_vars;
+
+  obj = enrichSuitesWithCaseIds(obj, allEndpoints);
 
   console.log(
     "SUITE CASE COUNTS:",

@@ -1,15 +1,3 @@
-function slug(value) {
-  return String(value || "")
-    .replace(/[{}]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-}
-
-function buildCaseId(prefix, endpoint, seq = "001") {
-  return `TC_${prefix}_${slug(endpoint?.method)}_${slug(endpoint?.path)}_${seq}`;
-}
-
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
   if (tags.length > 0) return `${tags[0]} API`;
@@ -86,16 +74,13 @@ function getRequiredPathParam(endpoint) {
   );
 }
 
-function baseNegativeCase(
-  endpoint,
-  { idPrefix, title, objective, priority = "P1" },
-) {
+function baseNegativeCase(endpoint, { title, objective, priority = "P1" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const moduleName = buildModuleName(endpoint);
 
   return {
-    id: buildCaseId(idPrefix, endpoint, "001"),
+    id: "",
     title,
     module: moduleName,
     test_type: "negative",
@@ -138,7 +123,6 @@ export function makeNegativeMissingRequiredQueryTemplate(endpoint) {
   const missingParamName = requiredQuery?.name || "<required_query_param>";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_MISSING_REQUIRED_QUERY",
     title: `Verify ${method} ${path} rejects request when required query parameter is missing`,
     objective:
       "Verify that the API rejects the request when a required query parameter is not provided.",
@@ -182,7 +166,6 @@ export function makeNegativeMissingRequiredPathTemplate(endpoint) {
   const missingParamName = requiredPath?.name || "<required_path_param>";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_MISSING_REQUIRED_PATH",
     title: `Verify ${method} ${path} rejects request when required path parameter is missing`,
     objective:
       "Verify that the API rejects or fails safely when a required path parameter is omitted or malformed.",
@@ -226,7 +209,6 @@ export function makeNegativeUnsupportedMethodTemplate(endpoint) {
           : "GET";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_UNSUPPORTED_METHOD",
     title: `Verify ${path} rejects unsupported HTTP methods`,
     objective:
       "Verify that the API rejects requests made with an unsupported HTTP method.",
@@ -261,7 +243,6 @@ export function makeNegativeInvalidContentTypeTemplate(endpoint) {
   const path = endpoint?.path || "/";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_INVALID_CONTENT_TYPE",
     title: `Verify ${method} ${path} rejects unsupported Content-Type header`,
     objective:
       "Verify that the API rejects requests sent with an invalid or unsupported Content-Type header.",
@@ -304,7 +285,6 @@ export function makeNegativeMalformedJsonTemplate(endpoint) {
   const path = endpoint?.path || "/";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_MALFORMED_JSON",
     title: `Verify ${method} ${path} rejects malformed JSON request body`,
     objective:
       "Verify that the API rejects syntactically invalid JSON request payloads.",
@@ -345,7 +325,6 @@ export function makeNegativeEmptyBodyTemplate(endpoint) {
   const path = endpoint?.path || "/";
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_EMPTY_BODY",
     title: `Verify ${method} ${path} rejects empty request body when body is required`,
     objective:
       "Verify that the API rejects an empty request body when the endpoint expects a required payload.",
@@ -391,7 +370,6 @@ export function makeNegativeResourceNotFoundTemplate(endpoint) {
   }
 
   const tc = baseNegativeCase(endpoint, {
-    idPrefix: "NEGATIVE_RESOURCE_NOT_FOUND",
     title: `Verify ${method} ${path} returns correct error for non-existent resource`,
     objective:
       "Verify that the API returns the correct error response when a non-existent resource identifier is used.",

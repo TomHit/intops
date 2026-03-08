@@ -1,15 +1,3 @@
-function slug(value) {
-  return String(value || "")
-    .replace(/[{}]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-}
-
-function buildCaseId(prefix, endpoint, seq = "001") {
-  return `TC_${prefix}_${slug(endpoint?.method)}_${slug(endpoint?.path)}_${seq}`;
-}
-
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
   if (tags.length > 0) return `${tags[0]} API`;
@@ -44,7 +32,7 @@ export function makeAuthMissingCredentialsTemplate(endpoint) {
   const moduleName = buildModuleName(endpoint);
 
   return {
-    id: buildCaseId("AUTH_MISSING_CREDENTIALS", endpoint, "001"),
+    id: "",
     title: `Verify ${method} ${path} rejects request without authentication credentials`,
     module: moduleName,
     test_type: "auth",

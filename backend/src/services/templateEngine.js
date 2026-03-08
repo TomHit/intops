@@ -1,10 +1,26 @@
 import {
   makeContractSuccessTemplate,
   makeContractRequiredFieldsTemplate,
+  makeContractContentTypeTemplate,
+  makeContractResponseHeadersTemplate,
+  makeContractQueryParamsTemplate,
+  makeContractPathParamsTemplate,
+  makeContractRequestBodyTemplate,
+  makeContractErrorResponseTemplate,
 } from "../templates/contractTemplates.js";
 
 import {
   makeSchemaResponseTemplate,
+  makeSchemaRequiredFieldsTemplate,
+  makeSchemaFieldTypesTemplate,
+  makeSchemaEnumTemplate,
+  makeSchemaNestedObjectsTemplate,
+  makeSchemaArrayTemplate,
+  makeSchemaFormatTemplate,
+  makeSchemaNumericConstraintsTemplate,
+  makeSchemaStringConstraintsTemplate,
+  makeSchemaPatternTemplate,
+  makeSchemaCompositionTemplate,
   makeSchemaRequestBodyTemplate,
 } from "../templates/schemaTemplates.js";
 
@@ -39,21 +55,67 @@ function methodMatchesFilter(endpoint, methodFilter) {
   return allowed.includes(endpointMethod);
 }
 
-function annotateCase(tc, rule) {
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ensureObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
+}
+
+function annotateCase(tc, rule, endpoint) {
   if (!tc) return null;
 
-  tc.id = `${tc.id}__${rule.rule_id}`;
+  tc.references = ensureArray(tc.references);
+  tc.preconditions = ensureArray(tc.preconditions);
+  tc.steps = ensureArray(tc.steps);
+  tc.expected_results = ensureArray(tc.expected_results);
+  tc.validation_focus = ensureArray(tc.validation_focus);
+  tc.test_data = ensureObject(tc.test_data);
 
-  tc.references = Array.isArray(tc.references) ? tc.references : [];
-  tc.references.push(`rule_id:${rule.rule_id}`);
-  tc.references.push(`scenario:${rule.scenario}`);
+  tc.api_details = {
+    method: normalizeMethod(
+      tc?.api_details?.method || endpoint?.method || "GET",
+    ),
+    path: tc?.api_details?.path || endpoint?.path || "/",
+  };
 
-  if (!tc.review_notes && rule.notes) {
+  if (rule?.rule_id) {
+    tc.references.push(`rule_id:${rule.rule_id}`);
+  }
+
+  if (rule?.scenario) {
+    tc.references.push(`scenario:${rule.scenario}`);
+  }
+
+  if (rule?.category && !tc.test_type) {
+    tc.test_type = String(rule.category).toLowerCase();
+  }
+
+  if (!tc.module) {
+    tc.module =
+      (Array.isArray(endpoint?.tags) && endpoint.tags[0]) ||
+      String(endpoint?.path || "")
+        .split("/")
+        .filter(Boolean)[0] ||
+      "Default";
+  }
+
+  if (typeof tc.review_notes !== "string") {
+    tc.review_notes = rule?.notes ? String(rule.notes) : "";
+  } else if (!tc.review_notes && rule?.notes) {
     tc.review_notes = String(rule.notes);
+  }
+
+  if (typeof tc.needs_review !== "boolean") {
+    tc.needs_review = false;
   }
 
   return tc;
 }
+
 function buildCaseFromCsvRule(rule, endpoint) {
   const category = String(rule.category || "").toLowerCase();
   const appliesWhen = String(rule.applies_when || "").trim();
@@ -61,13 +123,100 @@ function buildCaseFromCsvRule(rule, endpoint) {
 
   if (category === "contract") {
     if (
+      ruleId === "CONTRACT_001" ||
+      appliesWhen === "endpoint_exists" ||
+      appliesWhen === "success_response_documented"
+    ) {
+      return annotateCase(
+        makeContractSuccessTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
       ruleId === "CONTRACT_005" ||
       appliesWhen === "response_has_required_fields"
     ) {
-      return annotateCase(makeContractRequiredFieldsTemplate(endpoint), rule);
+      return annotateCase(
+        makeContractRequiredFieldsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
-    return annotateCase(makeContractSuccessTemplate(endpoint), rule);
+    if (
+      ruleId === "CONTRACT_002" ||
+      appliesWhen === "response_content_type_documented"
+    ) {
+      return annotateCase(
+        makeContractContentTypeTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "CONTRACT_003" ||
+      appliesWhen === "response_headers_documented"
+    ) {
+      return annotateCase(
+        makeContractResponseHeadersTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "CONTRACT_008" ||
+      appliesWhen === "endpoint_has_query_params" ||
+      appliesWhen === "query_params_documented"
+    ) {
+      return annotateCase(
+        makeContractQueryParamsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "CONTRACT_009" ||
+      appliesWhen === "endpoint_has_path_params" ||
+      appliesWhen === "path_params_documented"
+    ) {
+      return annotateCase(
+        makeContractPathParamsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "CONTRACT_010" ||
+      appliesWhen === "request_body_schema_exists" ||
+      appliesWhen === "request_body_documented"
+    ) {
+      return annotateCase(
+        makeContractRequestBodyTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "CONTRACT_012" ||
+      ruleId === "CONTRACT_013" ||
+      appliesWhen === "error_responses_documented" ||
+      appliesWhen === "operation_metadata_exists"
+    ) {
+      return annotateCase(
+        makeContractErrorResponseTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    return annotateCase(makeContractSuccessTemplate(endpoint), rule, endpoint);
   }
 
   if (category === "schema") {
@@ -77,10 +226,109 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "method_is_post_and_has_request_body" ||
       appliesWhen === "method_is_put_or_patch_and_has_request_body"
     ) {
-      return annotateCase(makeSchemaRequestBodyTemplate(endpoint), rule);
+      return annotateCase(
+        makeSchemaRequestBodyTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
-    return annotateCase(makeSchemaResponseTemplate(endpoint), rule);
+    if (ruleId === "SCHEMA_001" || appliesWhen === "response_schema_exists") {
+      return annotateCase(makeSchemaResponseTemplate(endpoint), rule, endpoint);
+    }
+
+    if (
+      ruleId === "SCHEMA_002" ||
+      appliesWhen === "response_schema_has_required_fields"
+    ) {
+      return annotateCase(
+        makeSchemaRequiredFieldsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "SCHEMA_003" ||
+      appliesWhen === "response_schema_has_typed_fields"
+    ) {
+      return annotateCase(
+        makeSchemaFieldTypesTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "SCHEMA_004" ||
+      appliesWhen === "response_schema_has_enum_fields"
+    ) {
+      return annotateCase(makeSchemaEnumTemplate(endpoint), rule, endpoint);
+    }
+
+    if (
+      ruleId === "SCHEMA_005" ||
+      appliesWhen === "response_schema_has_nested_objects"
+    ) {
+      return annotateCase(
+        makeSchemaNestedObjectsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "SCHEMA_006" ||
+      appliesWhen === "response_schema_has_array_fields"
+    ) {
+      return annotateCase(makeSchemaArrayTemplate(endpoint), rule, endpoint);
+    }
+
+    if (
+      ruleId === "SCHEMA_007" ||
+      appliesWhen === "response_schema_has_format_fields"
+    ) {
+      return annotateCase(makeSchemaFormatTemplate(endpoint), rule, endpoint);
+    }
+
+    if (
+      ruleId === "SCHEMA_008" ||
+      appliesWhen === "response_schema_has_numeric_constraints"
+    ) {
+      return annotateCase(
+        makeSchemaNumericConstraintsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "SCHEMA_009" ||
+      appliesWhen === "response_schema_has_string_constraints"
+    ) {
+      return annotateCase(
+        makeSchemaStringConstraintsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    if (
+      ruleId === "SCHEMA_010" ||
+      appliesWhen === "response_schema_has_pattern_fields"
+    ) {
+      return annotateCase(makeSchemaPatternTemplate(endpoint), rule, endpoint);
+    }
+
+    if (ruleId === "SCHEMA_011" || appliesWhen === "schema_has_composition") {
+      return annotateCase(
+        makeSchemaCompositionTemplate(endpoint),
+        rule,
+        endpoint,
+      );
+    }
+
+    return annotateCase(makeSchemaResponseTemplate(endpoint), rule, endpoint);
   }
 
   if (category === "negative") {
@@ -91,6 +339,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       return annotateCase(
         makeNegativeMissingRequiredQueryTemplate(endpoint),
         rule,
+        endpoint,
       );
     }
 
@@ -101,6 +350,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       return annotateCase(
         makeNegativeMissingRequiredPathTemplate(endpoint),
         rule,
+        endpoint,
       );
     }
 
@@ -108,6 +358,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       return annotateCase(
         makeNegativeUnsupportedMethodTemplate(endpoint),
         rule,
+        endpoint,
       );
     }
 
@@ -119,34 +370,89 @@ function buildCaseFromCsvRule(rule, endpoint) {
       return annotateCase(
         makeNegativeInvalidContentTypeTemplate(endpoint),
         rule,
+        endpoint,
       );
     }
 
     if (ruleId === "NEGATIVE_020" || ruleId === "NEGATIVE_113") {
-      return annotateCase(makeNegativeMalformedJsonTemplate(endpoint), rule);
+      return annotateCase(
+        makeNegativeMalformedJsonTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
     if (ruleId === "NEGATIVE_021" || appliesWhen === "request_body_required") {
-      return annotateCase(makeNegativeEmptyBodyTemplate(endpoint), rule);
+      return annotateCase(
+        makeNegativeEmptyBodyTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
     if (
       ruleId === "NEGATIVE_024" ||
       appliesWhen === "endpoint_has_resource_identifier"
     ) {
-      return annotateCase(makeNegativeResourceNotFoundTemplate(endpoint), rule);
+      return annotateCase(
+        makeNegativeResourceNotFoundTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
     if (appliesWhen === "endpoint_requires_auth") {
-      return annotateCase(makeAuthMissingCredentialsTemplate(endpoint), rule);
+      return annotateCase(
+        makeAuthMissingCredentialsTemplate(endpoint),
+        rule,
+        endpoint,
+      );
     }
 
     return annotateCase(
       makeNegativeMissingRequiredQueryTemplate(endpoint),
       rule,
+      endpoint,
     );
   }
+
+  if (category === "auth") {
+    return annotateCase(
+      makeAuthMissingCredentialsTemplate(endpoint),
+      rule,
+      endpoint,
+    );
+  }
+
   return null;
+}
+
+function buildDedupKey(tc) {
+  return JSON.stringify({
+    title: String(tc?.title || "").trim(),
+    test_type: String(tc?.test_type || "").trim(),
+    priority: String(tc?.priority || "").trim(),
+    objective: String(tc?.objective || "").trim(),
+    method: String(tc?.api_details?.method || "").trim(),
+    path: String(tc?.api_details?.path || "").trim(),
+    steps: ensureArray(tc?.steps),
+    expected_results: ensureArray(tc?.expected_results),
+    validation_focus: ensureArray(tc?.validation_focus),
+  });
+}
+
+function dedupeCases(cases) {
+  const out = [];
+  const seen = new Set();
+
+  for (const tc of ensureArray(cases)) {
+    const key = buildDedupKey(tc);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tc);
+  }
+
+  return out;
 }
 
 async function resolveCsvRules(endpoint, options = {}) {
@@ -202,6 +508,13 @@ async function resolveCsvRules(endpoint, options = {}) {
     );
   }
 
+  if (skippedConditionFalse.length > 0) {
+    console.log(
+      `CSV rules condition=false for ${endpoint?.method} ${endpoint?.path}:`,
+      skippedConditionFalse,
+    );
+  }
+
   return matchedRules;
 }
 
@@ -218,7 +531,7 @@ export async function generateCasesForEndpoint(endpoint, options = {}) {
     }
   }
 
-  return cases;
+  return dedupeCases(cases);
 }
 
 export async function generateCasesForEndpoints(endpoints, options = {}) {
