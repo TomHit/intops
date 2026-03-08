@@ -178,12 +178,28 @@ function requestBodySchemaControlsAdditionalProperties(endpoint) {
   return schema?.additionalProperties === false;
 }
 
-function requestContainsUniqueBusinessField(_endpoint) {
-  return false;
+function requestContainsUniqueBusinessField(endpoint) {
+  const schema = requestBodySchema(endpoint);
+  const props = schema?.properties || {};
+  const names = Object.keys(props).map((x) => String(x).toLowerCase());
+
+  return names.some((n) =>
+    [
+      "email",
+      "username",
+      "user_name",
+      "phone",
+      "mobile",
+      "code",
+      "external_id",
+      "slug",
+      "name",
+    ].includes(n),
+  );
 }
 
-function endpointCanConflict(_endpoint) {
-  return false;
+function endpointCanConflict(endpoint) {
+  return methodIsPost(endpoint) && requestContainsUniqueBusinessField(endpoint);
 }
 
 function endpointHasRateLimitContract(endpoint) {
@@ -192,11 +208,19 @@ function endpointHasRateLimitContract(endpoint) {
 }
 
 function endpointRequiresRoleScope(endpoint) {
-  return (
-    !!endpoint?.security &&
-    Array.isArray(endpoint.security) &&
-    endpoint.security.length > 0
-  );
+  const security = Array.isArray(endpoint?.security) ? endpoint.security : [];
+
+  for (const req of security) {
+    if (!req || typeof req !== "object") continue;
+
+    for (const scopes of Object.values(req)) {
+      if (Array.isArray(scopes) && scopes.length > 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function endpointHasPaginationParams(endpoint) {
@@ -204,7 +228,16 @@ function endpointHasPaginationParams(endpoint) {
     String(p?.name || "").toLowerCase(),
   );
   return names.some((n) =>
-    ["page", "limit", "offset", "pagesize", "page_size"].includes(n),
+    [
+      "page",
+      "limit",
+      "offset",
+      "pagesize",
+      "page_size",
+      "per_page",
+      "cursor",
+      "size",
+    ].includes(n),
   );
 }
 
@@ -228,7 +261,15 @@ function endpointHasFilterParams(endpoint) {
 
 export const RULE_CONDITION_MAP = {
   endpoint_exists: endpointExists,
-
+  endpoint_has_pagination: endpointHasPaginationParams,
+  query_or_body_has_enum: responseOrRequestSchemaHasEnum,
+  query_or_body_has_format: shouldGenerateSchemaFormat,
+  query_or_body_has_string_max_length: shouldGenerateSchemaStringConstraints,
+  query_or_body_has_numeric_maximum: shouldGenerateSchemaNumericConstraints,
+  request_body_is_object: (endpoint) => {
+    const schema = requestBodySchema(endpoint);
+    return !!(schema && (schema.type === "object" || schema.properties));
+  },
   endpoint_has_2xx_response: shouldGenerateContractSuccess,
   endpoint_has_documented_success_status: shouldGenerateContractSuccess,
   success_response_documented: shouldGenerateContractSuccess,

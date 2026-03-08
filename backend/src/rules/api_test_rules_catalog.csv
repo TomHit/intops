@@ -90,3 +90,8 @@ NEGATIVE_115,negative,Rate limit exceeded,endpoint_has_rate_limit_contract,Verif
 NEGATIVE_116,negative,Pagination overflow,endpoint_has_pagination_params,Verify API rejects pagination values beyond supported range,P2,minor,GET,query_param,Request extremely large page,negative.invalid_pagination
 NEGATIVE_119,negative,Null value in required field,request_body_has_required_fields,Verify API rejects null for required fields,P1,major,POST|PUT|PATCH,request_body,Send null for required field,negative.null_required_field
 NEGATIVE_120,negative,Schema composition violation,response_schema_has_composition,Verify API rejects payload violating composed schema rules,P1,major,POST|PUT|PATCH,schema,Send payload violating oneOf/anyOf,negative.composition_violation
+rule_id,category,scenario,applies_when,priority,method_filter,template_key,notes,,,
+AUTH_001,auth,Missing authentication credentials,endpoint_requires_auth,High,,auth.missing_credentials,Verify API rejects request when auth header/token/session is absent,,,auth.missing_credentials
+AUTH_002,auth,Invalid authentication credentials,endpoint_requires_auth,High,,auth.invalid_credentials,Verify API rejects request when auth token or credentials are malformed or invalid,,,auth.invalid_credentials
+AUTH_003,auth,Expired authentication credentials,endpoint_requires_auth,Medium,,auth.expired_credentials,Verify API rejects request when token/session is expired,,,auth.expired_credentials
+AUTH_004,auth,Forbidden role or insufficient scope,endpoint_requires_role_scope,High,,auth.forbidden_role,Verify API rejects authenticated user without required role or scope,,,auth.forbidden_role

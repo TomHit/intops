@@ -13,11 +13,9 @@ function parseMaybeYaml(text, filename = "") {
   const trimmed = (text || "").trim();
   if (!trimmed) throw new Error("OpenAPI is empty");
 
-  // quick detection
   const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   if (looksJson) return JSON.parse(trimmed);
 
-  // yaml fallback
   return yaml.load(trimmed);
 }
 
@@ -37,7 +35,8 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
 
     const res = await fetch(override, {
       headers: {
-        Accept: "application/json, text/plain, application/yaml, text/yaml",
+        Accept:
+          "application/json, text/plain, application/yaml, text/yaml, */*",
       },
     });
 
@@ -46,13 +45,7 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
     }
 
     const text = await res.text();
-
-    let doc;
-    try {
-      doc = JSON.parse(text);
-    } catch {
-      throw new Error("OpenAPI URL must currently return JSON");
-    }
+    const doc = parseMaybeYaml(text, override);
 
     return {
       cfg: {
@@ -66,8 +59,8 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
       doc,
     };
   }
-  const cfg = await loadProjectConfig(projectId);
 
+  const cfg = await loadProjectConfig(projectId);
   if (!cfg?.openapi?.value) throw new Error("Project openapi config missing");
 
   const mode =
@@ -75,6 +68,7 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
   const val = cfg.openapi.value;
 
   let text = "";
+
   if (mode === "url" || isHttpUrl(val)) {
     const res = await fetch(val, {
       headers: { Accept: "application/json,text/yaml,*/*" },
@@ -84,7 +78,6 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
     return { cfg, doc: parseMaybeYaml(text, val) };
   }
 
-  // local file under projects/<id>/
   const full = path.join(process.cwd(), "projects", projectId, val);
   text = await fs.readFile(full, "utf-8");
   return { cfg, doc: parseMaybeYaml(text, full) };

@@ -1,7 +1,135 @@
 import { loadRuleCatalog } from "../rules/loadRuleCatalog.js";
 import { RULE_CONDITION_MAP } from "../rules/ruleConditionMap.js";
 import { TEMPLATE_REGISTRY } from "./templateRegistry.js";
+import { resolveEndpointTestData } from "./testDataResolver.js";
+function firstItem(list) {
+  return Array.isArray(list) && list.length > 0 ? list[0] : null;
+}
 
+function firstByLocation(list, location) {
+  const items = Array.isArray(list) ? list : [];
+  return items.find((x) => x?.location === location) || items[0] || null;
+}
+function mergeObjects(base, extra) {
+  return {
+    ...(base && typeof base === "object" ? base : {}),
+    ...(extra && typeof extra === "object" ? extra : {}),
+  };
+}
+
+function inferResolvedTestData(templateKey, endpoint) {
+  const resolved =
+    endpoint?._resolvedTestData || resolveEndpointTestData(endpoint);
+
+  const validRequest = {
+    path_params: resolved?.valid?.path || {},
+    query_params: resolved?.valid?.query || {},
+    headers: resolved?.valid?.headers || {},
+    request_body: resolved?.valid?.body,
+  };
+
+  switch (templateKey) {
+    case "negative.missing_required_query":
+      return (
+        firstByLocation(resolved?.negative?.missingRequired, "query")
+          ?.request || validRequest
+      );
+
+    case "negative.missing_required_path":
+      return (
+        firstByLocation(resolved?.negative?.missingRequired, "path")?.request ||
+        validRequest
+      );
+
+    case "negative.empty_body":
+      return (
+        firstByLocation(resolved?.negative?.missingRequired, "body")
+          ?.request || {
+          ...validRequest,
+          request_body: undefined,
+        }
+      );
+
+    case "negative.invalid_query_type":
+      return (
+        firstItem(resolved?.negative?.invalidType)?.request || validRequest
+      );
+
+    case "negative.invalid_enum":
+      return (
+        firstItem(resolved?.negative?.invalidEnum)?.request || validRequest
+      );
+
+    case "negative.invalid_format":
+      return (
+        firstItem(resolved?.negative?.invalidFormat)?.request || validRequest
+      );
+
+    case "negative.string_too_long":
+      return (
+        firstItem(resolved?.negative?.stringTooLong)?.request || validRequest
+      );
+
+    case "negative.numeric_above_maximum":
+      return (
+        firstItem(resolved?.negative?.numericAboveMaximum)?.request ||
+        validRequest
+      );
+
+    case "negative.invalid_content_type":
+      return {
+        ...validRequest,
+        headers: {
+          ...(validRequest.headers || {}),
+          "Content-Type": "text/plain",
+        },
+      };
+
+    case "negative.malformed_json":
+      return {
+        ...validRequest,
+        headers: {
+          ...(validRequest.headers || {}),
+          "Content-Type": "application/json",
+        },
+        request_body: "{invalid-json",
+      };
+
+    case "negative.null_required_field": {
+      const body = resolved?.valid?.body;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const firstField = Object.keys(body)[0];
+        if (firstField) {
+          return {
+            ...validRequest,
+            request_body: {
+              ...body,
+              [firstField]: null,
+            },
+          };
+        }
+      }
+      return validRequest;
+    }
+
+    case "negative.additional_property": {
+      const body = resolved?.valid?.body;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        return {
+          ...validRequest,
+          request_body: {
+            ...body,
+            unexpectedProperty: "extra-value",
+          },
+        };
+      }
+      return validRequest;
+    }
+
+    default:
+      return validRequest;
+  }
+}
 function normalizeMethod(method) {
   return String(method || "").toUpperCase();
 }
@@ -49,7 +177,6 @@ function annotateCase(tc, rule, endpoint) {
   if (rule?.rule_id) {
     tc.references.push(`rule_id:${rule.rule_id}`);
   }
-
   if (rule?.scenario) {
     tc.references.push(`scenario:${rule.scenario}`);
   }
@@ -82,9 +209,25 @@ function annotateCase(tc, rule, endpoint) {
     tc.needs_review = false;
   }
 
+  const resolvedData = inferResolvedTestData(resolvedTemplateKey, endpoint);
+  tc.test_data = {
+    path_params: mergeObjects(
+      resolvedData?.path_params,
+      tc?.test_data?.path_params,
+    ),
+    query_params: mergeObjects(
+      resolvedData?.query_params,
+      tc?.test_data?.query_params,
+    ),
+    headers: mergeObjects(resolvedData?.headers, tc?.test_data?.headers),
+    request_body:
+      tc?.test_data?.request_body !== undefined
+        ? tc.test_data.request_body
+        : resolvedData?.request_body,
+  };
+
   return tc;
 }
-
 function resolveLegacyTemplateKey(rule) {
   const category = String(rule.category || "").toLowerCase();
   const appliesWhen = String(rule.applies_when || "").trim();
@@ -304,6 +447,25 @@ function resolveLegacyTemplateKey(rule) {
   }
 
   if (category === "auth") {
+    if (ruleId === "AUTH_001" || appliesWhen === "endpoint_requires_auth") {
+      return "auth.missing_credentials";
+    }
+
+    if (ruleId === "AUTH_002") {
+      return "auth.invalid_credentials";
+    }
+
+    if (ruleId === "AUTH_003") {
+      return "auth.expired_credentials";
+    }
+
+    if (
+      ruleId === "AUTH_004" ||
+      appliesWhen === "endpoint_requires_role_scope"
+    ) {
+      return "auth.forbidden_role";
+    }
+
     return "auth.missing_credentials";
   }
 
@@ -451,12 +613,17 @@ async function resolveCsvRules(endpoint, options = {}) {
 }
 
 export async function generateCasesForEndpoint(endpoint, options = {}) {
-  const matchedRules = await resolveCsvRules(endpoint, options);
+  const enrichedEndpoint = {
+    ...endpoint,
+    _resolvedTestData: resolveEndpointTestData(endpoint),
+  };
+
+  const matchedRules = await resolveCsvRules(enrichedEndpoint, options);
   const cases = [];
 
   for (const rule of matchedRules) {
     try {
-      const tc = buildCaseFromCsvRule(rule, endpoint);
+      const tc = buildCaseFromCsvRule(rule, enrichedEndpoint);
       if (tc) cases.push(tc);
     } catch (err) {
       console.error(`Template build failed for CSV rule: ${rule.rule_id}`, err);

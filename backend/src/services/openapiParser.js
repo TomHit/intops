@@ -1,112 +1,84 @@
-function pick(obj, keys) {
-  for (const k of keys) {
-    if (obj && obj[k] !== undefined) return obj[k];
-  }
-  return undefined;
+import fs from "fs/promises";
+import path from "path";
+import yaml from "js-yaml";
+
+function isHttpUrl(s) {
+  return (
+    typeof s === "string" &&
+    (s.startsWith("http://") || s.startsWith("https://"))
+  );
 }
 
-function normalizeMethod(m) {
-  return String(m || "").toUpperCase();
+function parseMaybeYaml(text, filename = "") {
+  const trimmed = (text || "").trim();
+  if (!trimmed) throw new Error("OpenAPI is empty");
+
+  const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (looksJson) return JSON.parse(trimmed);
+
+  return yaml.load(trimmed);
 }
 
-function summarizeSchema(schema) {
-  // Keep it short; do NOT dump full OpenAPI
-  if (!schema || typeof schema !== "object") return null;
-
-  const type = schema.type || (schema.properties ? "object" : undefined);
-  const required = Array.isArray(schema.required)
-    ? schema.required.slice(0, 20)
-    : [];
-  const props =
-    schema.properties && typeof schema.properties === "object"
-      ? Object.keys(schema.properties).slice(0, 30)
-      : [];
-
-  return { type, required, properties: props };
+export async function loadProjectConfig(projectId) {
+  const p = path.join(process.cwd(), "projects", projectId, "project.json");
+  const raw = await fs.readFile(p, "utf-8");
+  return JSON.parse(raw);
 }
 
-function pickBestResponse(op) {
-  const responses = op?.responses || {};
-  const ok = responses["200"] || responses["201"] || responses["204"] || null;
-  const any = ok || responses["default"] || null;
-  if (!any) return null;
+export async function loadOpenApiDoc(projectId, opts = {}) {
+  const override = opts?.specSourceOverride;
 
-  const content = any.content || {};
-  const json =
-    content["application/json"] || content["application/*+json"] || null;
-  const schema = pick(json, ["schema"]) || null;
-
-  return {
-    status: ok
-      ? responses["200"]
-        ? 200
-        : responses["201"]
-          ? 201
-          : 204
-      : "default",
-    contentType: json ? "application/json" : Object.keys(content)[0] || null,
-    schemaSummary: summarizeSchema(schema),
-  };
-}
-
-function parseParams(op) {
-  const out = { query: [], path: [], header: [] };
-
-  const params = Array.isArray(op?.parameters) ? op.parameters : [];
-  for (const p of params) {
-    const where = p?.in;
-    const name = p?.name;
-    if (!where || !name) continue;
-
-    out[where] = out[where] || [];
-    out[where].push({
-      name,
-      required: !!p.required,
-      schema: summarizeSchema(p.schema),
-      description: p.description
-        ? String(p.description).slice(0, 120)
-        : undefined,
-    });
-  }
-
-  return out;
-}
-
-export function extractEndpoints(openapiDoc) {
-  const paths = openapiDoc?.paths || {};
-  const out = [];
-
-  for (const pth of Object.keys(paths)) {
-    const item = paths[pth] || {};
-    for (const m of Object.keys(item)) {
-      const method = normalizeMethod(m);
-      if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) continue;
-
-      const op = item[m];
-      const tags = Array.isArray(op?.tags) ? op.tags : [];
-      const summary = op?.summary || op?.operationId || "";
-
-      const params = parseParams(op);
-      const resp = pickBestResponse(op);
-
-      out.push({
-        id: `${method} ${pth}`,
-        method,
-        path: pth,
-        tags,
-        summary: summary ? String(summary).slice(0, 120) : "",
-        params,
-
-        // summarized response for UI/debug
-        response: resp,
-
-        // raw OpenAPI data for generator/template engine
-        responses: op?.responses || {},
-        requestBody: op?.requestBody || null,
-        security: op?.security || openapiDoc?.security || [],
-      });
+  if (override) {
+    if (!/^https?:\/\//i.test(override)) {
+      throw new Error("Only http/https OpenAPI URL is supported right now");
     }
+
+    const res = await fetch(override, {
+      headers: {
+        Accept:
+          "application/json, text/plain, application/yaml, text/yaml, */*",
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to load OpenAPI URL: ${res.status}`);
+    }
+
+    const text = await res.text();
+    const doc = parseMaybeYaml(text, override);
+
+    return {
+      cfg: {
+        project_id: projectId,
+        project_name: projectId,
+        openapi: {
+          mode: "url",
+          value: override,
+        },
+      },
+      doc,
+    };
   }
 
-  return out;
+  const cfg = await loadProjectConfig(projectId);
+  if (!cfg?.openapi?.value) throw new Error("Project openapi config missing");
+
+  const mode =
+    cfg.openapi.mode || (isHttpUrl(cfg.openapi.value) ? "url" : "file");
+  const val = cfg.openapi.value;
+
+  let text = "";
+
+  if (mode === "url" || isHttpUrl(val)) {
+    const res = await fetch(val, {
+      headers: { Accept: "application/json,text/yaml,*/*" },
+    });
+    if (!res.ok) throw new Error(`OpenAPI fetch failed: ${res.status}`);
+    text = await res.text();
+    return { cfg, doc: parseMaybeYaml(text, val) };
+  }
+
+  const full = path.join(process.cwd(), "projects", projectId, val);
+  text = await fs.readFile(full, "utf-8");
+  return { cfg, doc: parseMaybeYaml(text, full) };
 }
