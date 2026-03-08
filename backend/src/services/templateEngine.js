@@ -1,42 +1,6 @@
-import {
-  makeContractSuccessTemplate,
-  makeContractRequiredFieldsTemplate,
-  makeContractContentTypeTemplate,
-  makeContractResponseHeadersTemplate,
-  makeContractQueryParamsTemplate,
-  makeContractPathParamsTemplate,
-  makeContractRequestBodyTemplate,
-  makeContractErrorResponseTemplate,
-} from "../templates/contractTemplates.js";
-
-import {
-  makeSchemaResponseTemplate,
-  makeSchemaRequiredFieldsTemplate,
-  makeSchemaFieldTypesTemplate,
-  makeSchemaEnumTemplate,
-  makeSchemaNestedObjectsTemplate,
-  makeSchemaArrayTemplate,
-  makeSchemaFormatTemplate,
-  makeSchemaNumericConstraintsTemplate,
-  makeSchemaStringConstraintsTemplate,
-  makeSchemaPatternTemplate,
-  makeSchemaCompositionTemplate,
-  makeSchemaRequestBodyTemplate,
-} from "../templates/schemaTemplates.js";
-
-import {
-  makeNegativeMissingRequiredQueryTemplate,
-  makeNegativeMissingRequiredPathTemplate,
-  makeNegativeUnsupportedMethodTemplate,
-  makeNegativeInvalidContentTypeTemplate,
-  makeNegativeMalformedJsonTemplate,
-  makeNegativeEmptyBodyTemplate,
-  makeNegativeResourceNotFoundTemplate,
-} from "../templates/negativeTemplates.js";
-import { makeAuthMissingCredentialsTemplate } from "../templates/authTemplates.js";
-
 import { loadRuleCatalog } from "../rules/loadRuleCatalog.js";
 import { RULE_CONDITION_MAP } from "../rules/ruleConditionMap.js";
+import { TEMPLATE_REGISTRY } from "./templateRegistry.js";
 
 function normalizeMethod(method) {
   return String(method || "").toUpperCase();
@@ -90,6 +54,11 @@ function annotateCase(tc, rule, endpoint) {
     tc.references.push(`scenario:${rule.scenario}`);
   }
 
+  const resolvedTemplateKey = getTemplateKey(rule);
+  if (resolvedTemplateKey) {
+    tc.references.push(`template_key:${resolvedTemplateKey}`);
+  }
+
   if (rule?.category && !tc.test_type) {
     tc.test_type = String(rule.category).toLowerCase();
   }
@@ -116,7 +85,7 @@ function annotateCase(tc, rule, endpoint) {
   return tc;
 }
 
-function buildCaseFromCsvRule(rule, endpoint) {
+function resolveLegacyTemplateKey(rule) {
   const category = String(rule.category || "").toLowerCase();
   const appliesWhen = String(rule.applies_when || "").trim();
   const ruleId = String(rule.rule_id || "").trim();
@@ -127,44 +96,28 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "endpoint_exists" ||
       appliesWhen === "success_response_documented"
     ) {
-      return annotateCase(
-        makeContractSuccessTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.success";
     }
 
     if (
       ruleId === "CONTRACT_005" ||
       appliesWhen === "response_has_required_fields"
     ) {
-      return annotateCase(
-        makeContractRequiredFieldsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.required_fields";
     }
 
     if (
       ruleId === "CONTRACT_002" ||
       appliesWhen === "response_content_type_documented"
     ) {
-      return annotateCase(
-        makeContractContentTypeTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.content_type";
     }
 
     if (
       ruleId === "CONTRACT_003" ||
       appliesWhen === "response_headers_documented"
     ) {
-      return annotateCase(
-        makeContractResponseHeadersTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.response_headers";
     }
 
     if (
@@ -172,11 +125,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "endpoint_has_query_params" ||
       appliesWhen === "query_params_documented"
     ) {
-      return annotateCase(
-        makeContractQueryParamsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.query_params";
     }
 
     if (
@@ -184,11 +133,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "endpoint_has_path_params" ||
       appliesWhen === "path_params_documented"
     ) {
-      return annotateCase(
-        makeContractPathParamsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.path_params";
     }
 
     if (
@@ -196,11 +141,7 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "request_body_schema_exists" ||
       appliesWhen === "request_body_documented"
     ) {
-      return annotateCase(
-        makeContractRequestBodyTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.request_body";
     }
 
     if (
@@ -209,14 +150,10 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "error_responses_documented" ||
       appliesWhen === "operation_metadata_exists"
     ) {
-      return annotateCase(
-        makeContractErrorResponseTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "contract.error_response";
     }
 
-    return annotateCase(makeContractSuccessTemplate(endpoint), rule, endpoint);
+    return "contract.success";
   }
 
   if (category === "schema") {
@@ -226,109 +163,81 @@ function buildCaseFromCsvRule(rule, endpoint) {
       appliesWhen === "method_is_post_and_has_request_body" ||
       appliesWhen === "method_is_put_or_patch_and_has_request_body"
     ) {
-      return annotateCase(
-        makeSchemaRequestBodyTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.request_body";
     }
 
     if (ruleId === "SCHEMA_001" || appliesWhen === "response_schema_exists") {
-      return annotateCase(makeSchemaResponseTemplate(endpoint), rule, endpoint);
+      return "schema.response";
     }
 
     if (
       ruleId === "SCHEMA_002" ||
       appliesWhen === "response_schema_has_required_fields"
     ) {
-      return annotateCase(
-        makeSchemaRequiredFieldsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.required_fields";
     }
 
     if (
       ruleId === "SCHEMA_003" ||
       appliesWhen === "response_schema_has_typed_fields"
     ) {
-      return annotateCase(
-        makeSchemaFieldTypesTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.field_types";
     }
 
     if (
       ruleId === "SCHEMA_004" ||
       appliesWhen === "response_schema_has_enum_fields"
     ) {
-      return annotateCase(makeSchemaEnumTemplate(endpoint), rule, endpoint);
+      return "schema.enum";
     }
 
     if (
       ruleId === "SCHEMA_005" ||
       appliesWhen === "response_schema_has_nested_objects"
     ) {
-      return annotateCase(
-        makeSchemaNestedObjectsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.nested_objects";
     }
 
     if (
       ruleId === "SCHEMA_006" ||
       appliesWhen === "response_schema_has_array_fields"
     ) {
-      return annotateCase(makeSchemaArrayTemplate(endpoint), rule, endpoint);
+      return "schema.array";
     }
 
     if (
       ruleId === "SCHEMA_007" ||
       appliesWhen === "response_schema_has_format_fields"
     ) {
-      return annotateCase(makeSchemaFormatTemplate(endpoint), rule, endpoint);
+      return "schema.format";
     }
 
     if (
       ruleId === "SCHEMA_008" ||
       appliesWhen === "response_schema_has_numeric_constraints"
     ) {
-      return annotateCase(
-        makeSchemaNumericConstraintsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.numeric_constraints";
     }
 
     if (
       ruleId === "SCHEMA_009" ||
       appliesWhen === "response_schema_has_string_constraints"
     ) {
-      return annotateCase(
-        makeSchemaStringConstraintsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.string_constraints";
     }
 
     if (
       ruleId === "SCHEMA_010" ||
       appliesWhen === "response_schema_has_pattern_fields"
     ) {
-      return annotateCase(makeSchemaPatternTemplate(endpoint), rule, endpoint);
+      return "schema.pattern";
     }
 
     if (ruleId === "SCHEMA_011" || appliesWhen === "schema_has_composition") {
-      return annotateCase(
-        makeSchemaCompositionTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "schema.composition";
     }
 
-    return annotateCase(makeSchemaResponseTemplate(endpoint), rule, endpoint);
+    return "schema.response";
   }
 
   if (category === "negative") {
@@ -336,30 +245,18 @@ function buildCaseFromCsvRule(rule, endpoint) {
       ruleId === "NEGATIVE_001" ||
       appliesWhen === "endpoint_has_required_query"
     ) {
-      return annotateCase(
-        makeNegativeMissingRequiredQueryTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.missing_required_query";
     }
 
     if (
       ruleId === "NEGATIVE_002" ||
       appliesWhen === "endpoint_has_path_params"
     ) {
-      return annotateCase(
-        makeNegativeMissingRequiredPathTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.missing_required_path";
     }
 
     if (ruleId === "NEGATIVE_018" || appliesWhen === "endpoint_exists") {
-      return annotateCase(
-        makeNegativeUnsupportedMethodTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.unsupported_method";
     }
 
     if (
@@ -367,77 +264,109 @@ function buildCaseFromCsvRule(rule, endpoint) {
       ruleId === "NEGATIVE_107" ||
       appliesWhen === "request_body_schema_exists"
     ) {
-      return annotateCase(
-        makeNegativeInvalidContentTypeTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.invalid_content_type";
     }
 
     if (ruleId === "NEGATIVE_020" || ruleId === "NEGATIVE_113") {
-      return annotateCase(
-        makeNegativeMalformedJsonTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.malformed_json";
     }
 
     if (ruleId === "NEGATIVE_021" || appliesWhen === "request_body_required") {
-      return annotateCase(
-        makeNegativeEmptyBodyTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.empty_body";
     }
 
     if (
       ruleId === "NEGATIVE_024" ||
       appliesWhen === "endpoint_has_resource_identifier"
     ) {
-      return annotateCase(
-        makeNegativeResourceNotFoundTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+      return "negative.resource_not_found";
+    }
+    if (ruleId === "NEGATIVE_014" || appliesWhen === "endpoint_requires_auth") {
+      return "auth.missing_credentials";
     }
 
-    if (appliesWhen === "endpoint_requires_auth") {
-      return annotateCase(
-        makeAuthMissingCredentialsTemplate(endpoint),
-        rule,
-        endpoint,
-      );
+    if (ruleId === "NEGATIVE_015") {
+      return "auth.invalid_credentials";
     }
 
-    return annotateCase(
-      makeNegativeMissingRequiredQueryTemplate(endpoint),
-      rule,
-      endpoint,
-    );
+    if (ruleId === "NEGATIVE_016") {
+      return "auth.expired_credentials";
+    }
+
+    if (
+      ruleId === "NEGATIVE_017" ||
+      appliesWhen === "endpoint_requires_role_scope"
+    ) {
+      return "auth.forbidden_role";
+    }
+
+    return "negative.missing_required_query";
   }
 
   if (category === "auth") {
-    return annotateCase(
-      makeAuthMissingCredentialsTemplate(endpoint),
-      rule,
-      endpoint,
-    );
+    return "auth.missing_credentials";
   }
 
-  return null;
+  return "";
+}
+
+function getTemplateKey(rule) {
+  const direct = String(rule?.template_key || "").trim();
+  if (direct) return direct;
+  return resolveLegacyTemplateKey(rule);
+}
+
+function buildCaseFromCsvRule(rule, endpoint) {
+  const templateKey = getTemplateKey(rule);
+  const fn = TEMPLATE_REGISTRY[templateKey];
+
+  if (!fn) {
+    console.warn(
+      `No template found for rule ${rule?.rule_id || "UNKNOWN"} using template_key=${templateKey}`,
+    );
+    return null;
+  }
+
+  return annotateCase(fn(endpoint), rule, endpoint);
 }
 
 function buildDedupKey(tc) {
   return JSON.stringify({
-    title: String(tc?.title || "").trim(),
-    test_type: String(tc?.test_type || "").trim(),
-    priority: String(tc?.priority || "").trim(),
-    objective: String(tc?.objective || "").trim(),
-    method: String(tc?.api_details?.method || "").trim(),
+    title: String(tc?.title || "")
+      .trim()
+      .toLowerCase(),
+    test_type: String(tc?.test_type || "")
+      .trim()
+      .toLowerCase(),
+    priority: String(tc?.priority || "")
+      .trim()
+      .toUpperCase(),
+    objective: String(tc?.objective || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase(),
+    method: String(tc?.api_details?.method || "")
+      .trim()
+      .toUpperCase(),
     path: String(tc?.api_details?.path || "").trim(),
-    steps: ensureArray(tc?.steps),
-    expected_results: ensureArray(tc?.expected_results),
-    validation_focus: ensureArray(tc?.validation_focus),
+    steps: ensureArray(tc?.steps).map((x) =>
+      String(x || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase(),
+    ),
+    expected_results: ensureArray(tc?.expected_results).map((x) =>
+      String(x || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase(),
+    ),
+    validation_focus: ensureArray(tc?.validation_focus).map((x) =>
+      String(x || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase(),
+    ),
   });
 }
 
@@ -498,7 +427,10 @@ async function resolveCsvRules(endpoint, options = {}) {
 
   console.log(
     `MATCHED CSV RULES for ${endpoint?.method} ${endpoint?.path}:`,
-    matchedRules.map((r) => `${r.rule_id} | ${r.category} | ${r.scenario}`),
+    matchedRules.map(
+      (r) =>
+        `${r.rule_id} | ${r.category} | ${r.scenario} | template=${getTemplateKey(r)}`,
+    ),
   );
 
   if (skippedNoCondition.length > 0) {

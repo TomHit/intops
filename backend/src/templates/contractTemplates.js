@@ -220,6 +220,32 @@ export function makeContractSuccessTemplate(endpoint) {
   return tc;
 }
 
+export function makeContractStatusCodeTemplate(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const successStatus = getSuccessStatus(endpoint);
+
+  const tc = baseCase(endpoint, {
+    title: `Verify ${method} ${path} returns the documented success status code`,
+    objective:
+      "Verify that the endpoint returns the documented HTTP success status code for a valid request.",
+    priority: "P1",
+  });
+
+  tc.expected_results = [
+    `The API responds with HTTP ${successStatus}.`,
+    "The returned success status code matches the documented API contract.",
+    "No unexpected success or client/server error code is returned for a valid request.",
+  ];
+
+  tc.validation_focus = [
+    "HTTP success status",
+    "Documented status code compliance",
+  ];
+
+  return tc;
+}
+
 export function makeContractRequiredFieldsTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
