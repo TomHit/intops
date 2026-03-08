@@ -1,3 +1,9 @@
+import {
+  buildPathParams,
+  buildQueryParams,
+  buildHeaders,
+} from "../utils/paramDataGenerator.js";
+
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
   if (tags.length > 0) return `${tags[0]} API`;
@@ -18,40 +24,7 @@ function getOptionalQueryParams(endpoint) {
   return query.filter((p) => !p?.required);
 }
 
-function buildQueryParams(endpoint) {
-  const out = {};
-
-  for (const p of getRequiredQueryParams(endpoint)) {
-    out[p.name] = `<provide_valid_${p.name}>`;
-  }
-
-  for (const p of getOptionalQueryParams(endpoint)) {
-    if (!(p.name in out)) {
-      out[p.name] = `<optional_${p.name}>`;
-    }
-  }
-
-  return out;
-}
-
-function buildHeaders(endpoint) {
-  const headers = {};
-  if (Array.isArray(endpoint?.security) && endpoint.security.length > 0) {
-    headers.Authorization = "Bearer <valid_token>";
-  }
-  return headers;
-}
-
-function buildPathParams(endpoint) {
-  const out = {};
-  const pathParams = Array.isArray(endpoint?.params?.path)
-    ? endpoint.params.path
-    : [];
-  for (const p of pathParams) {
-    out[p.name] = `<valid_${p.name}>`;
-  }
-  return out;
-}
+import { generateObjectFromSchema } from "../utils/testDataGenerator.js";
 
 function buildRequestBody(endpoint) {
   const schema =
@@ -61,16 +34,8 @@ function buildRequestBody(endpoint) {
 
   if (!schema) return null;
 
-  const props = schema?.properties || {};
-  const body = {};
-
-  for (const key of Object.keys(props)) {
-    body[key] = `<valid_${key}>`;
-  }
-
-  return Object.keys(body).length > 0 ? body : {};
+  return generateObjectFromSchema(schema);
 }
-
 function getSuccessStatus(endpoint) {
   const responses = endpoint?.responses || {};
   if (responses["200"]) return 200;

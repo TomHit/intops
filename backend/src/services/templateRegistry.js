@@ -33,6 +33,16 @@ import {
   makeNegativeMalformedJsonTemplate,
   makeNegativeEmptyBodyTemplate,
   makeNegativeResourceNotFoundTemplate,
+  makeNegativeInvalidQueryTypeTemplate,
+  makeNegativeInvalidEnumTemplate,
+  makeNegativeInvalidFormatTemplate,
+  makeNegativeStringTooLongTemplate,
+  makeNegativeNumericAboveMaximumTemplate,
+  makeNegativeAdditionalPropertyTemplate,
+  makeNegativeConflictTemplate,
+  makeNegativeRateLimitTemplate,
+  makeNegativeInvalidPaginationTemplate,
+  makeNegativeNullRequiredFieldTemplate,
 } from "../templates/negativeTemplates.js";
 
 import {
@@ -73,6 +83,16 @@ export const TEMPLATE_REGISTRY = {
   "negative.malformed_json": makeNegativeMalformedJsonTemplate,
   "negative.empty_body": makeNegativeEmptyBodyTemplate,
   "negative.resource_not_found": makeNegativeResourceNotFoundTemplate,
+  "negative.invalid_query_type": makeNegativeInvalidQueryTypeTemplate,
+  "negative.invalid_enum": makeNegativeInvalidEnumTemplate,
+  "negative.invalid_format": makeNegativeInvalidFormatTemplate,
+  "negative.string_too_long": makeNegativeStringTooLongTemplate,
+  "negative.numeric_above_maximum": makeNegativeNumericAboveMaximumTemplate,
+  "negative.additional_property": makeNegativeAdditionalPropertyTemplate,
+  "negative.conflict": makeNegativeConflictTemplate,
+  "negative.rate_limit": makeNegativeRateLimitTemplate,
+  "negative.invalid_pagination": makeNegativeInvalidPaginationTemplate,
+  "negative.null_required_field": makeNegativeNullRequiredFieldTemplate,
 
   "auth.missing_credentials": makeAuthMissingCredentialsTemplate,
   "auth.invalid_credentials": makeAuthInvalidCredentialsTemplate,
