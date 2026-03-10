@@ -19,6 +19,7 @@ function pickExample(obj) {
     if (Array.isArray(obj.examples) && obj.examples.length > 0) {
       return clone(obj.examples[0]);
     }
+
     if (isObject(obj.examples)) {
       const first = Object.values(obj.examples)[0];
       if (isObject(first) && first.value !== undefined) {
@@ -72,14 +73,12 @@ function dereferenceSchema(schema, openapiDoc, seenRefs = new Set()) {
 
     const derefResolved = dereferenceSchema(resolved, openapiDoc, nextSeen);
 
-    const merged = {
+    return {
       ...clone(derefResolved),
       ...Object.fromEntries(
         Object.entries(schema).filter(([k]) => k !== "$ref"),
       ),
     };
-
-    return merged;
   }
 
   const out = { ...clone(schema) };
@@ -156,28 +155,131 @@ function normalizeSchema(schema, openapiDoc) {
   return dereferenceSchema(schema, openapiDoc);
 }
 
-function normalizeParam(p, openapiDoc) {
-  if (!isObject(p) || !p.name || !p.in) return null;
+function resolveParameterObject(p, openapiDoc, seenRefs = new Set()) {
+  if (!isObject(p)) return null;
 
-  const schema = normalizeSchema(p.schema || {}, openapiDoc);
+  if (p.$ref) {
+    const ref = p.$ref;
+    if (seenRefs.has(ref)) return null;
+
+    const resolved = resolveRef(ref, openapiDoc);
+    if (!resolved) return null;
+
+    const nextSeen = new Set(seenRefs);
+    nextSeen.add(ref);
+
+    const deref = resolveParameterObject(resolved, openapiDoc, nextSeen);
+    if (!deref) return null;
+
+    return {
+      ...clone(deref),
+      ...Object.fromEntries(Object.entries(p).filter(([k]) => k !== "$ref")),
+    };
+  }
+
+  return clone(p);
+}
+
+function normalizeParam(p, openapiDoc) {
+  const param = resolveParameterObject(p, openapiDoc);
+  if (!isObject(param) || !param.name || !param.in) return null;
+
+  const schema = normalizeSchema(param.schema || {}, openapiDoc);
 
   return {
-    name: p.name,
-    in: p.in,
-    required: !!p.required,
-    description: p.description ? String(p.description).slice(0, 240) : "",
-    style: p.style,
-    explode: p.explode,
-    deprecated: !!p.deprecated,
-    allowEmptyValue: !!p.allowEmptyValue,
-    example: pickExample(p) ?? pickExample(schema),
+    name: param.name,
+    in: param.in,
+    required: !!param.required,
+    description: param.description
+      ? String(param.description).slice(0, 240)
+      : "",
+    style: param.style,
+    explode: param.explode,
+    deprecated: !!param.deprecated,
+    allowEmptyValue: !!param.allowEmptyValue,
+    example: pickExample(param) ?? pickExample(schema),
     schema,
     schemaSummary: summarizeSchema(schema),
   };
 }
 
+function buildSyntheticAuthHeaders(op, openapiDoc) {
+  const out = [];
+  const securityReqs = Array.isArray(op?.security)
+    ? op.security
+    : Array.isArray(openapiDoc?.security)
+      ? openapiDoc.security
+      : [];
+
+  const schemes = openapiDoc?.components?.securitySchemes || {};
+  const seen = new Set();
+
+  for (const req of securityReqs) {
+    if (!isObject(req)) continue;
+
+    for (const schemeName of Object.keys(req)) {
+      const scheme = schemes?.[schemeName];
+      if (!isObject(scheme)) continue;
+
+      if (scheme.type === "http" && scheme.scheme === "bearer") {
+        const key = "header:Authorization";
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        out.push({
+          name: "Authorization",
+          in: "header",
+          required: true,
+          description: `Auth header from security scheme '${schemeName}'`,
+          style: undefined,
+          explode: undefined,
+          deprecated: false,
+          allowEmptyValue: false,
+          example: "Bearer <token>",
+          schema: { type: "string" },
+          schemaSummary: { type: "string" },
+          synthetic: true,
+          authScheme: schemeName,
+        });
+      } else if (
+        scheme.type === "apiKey" &&
+        scheme.in === "header" &&
+        scheme.name
+      ) {
+        const key = `header:${scheme.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        out.push({
+          name: scheme.name,
+          in: "header",
+          required: true,
+          description: `API key header from security scheme '${schemeName}'`,
+          style: undefined,
+          explode: undefined,
+          deprecated: false,
+          allowEmptyValue: false,
+          example: `<${scheme.name}_value>`,
+          schema: { type: "string" },
+          schemaSummary: { type: "string" },
+          synthetic: true,
+          authScheme: schemeName,
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
 function parseParams(pathItem, op, openapiDoc) {
-  const out = { query: [], path: [], header: [], cookie: [] };
+  const out = {
+    query: [],
+    path: [],
+    header: [],
+    cookie: [],
+  };
+
   const merged = [
     ...(Array.isArray(pathItem?.parameters) ? pathItem.parameters : []),
     ...(Array.isArray(op?.parameters) ? op.parameters : []),
@@ -195,6 +297,14 @@ function parseParams(pathItem, op, openapiDoc) {
 
     if (!out[n.in]) out[n.in] = [];
     out[n.in].push(n);
+  }
+
+  const authHeaders = buildSyntheticAuthHeaders(op, openapiDoc);
+  for (const h of authHeaders) {
+    const key = `${h.in}:${h.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.header.push(h);
   }
 
   return out;
@@ -216,10 +326,43 @@ function normalizeMediaContent(content = {}, openapiDoc) {
   return out;
 }
 
-function normalizeRequestBody(requestBody, openapiDoc) {
+function resolveRequestBodyObject(
+  requestBody,
+  openapiDoc,
+  seenRefs = new Set(),
+) {
   if (!isObject(requestBody)) return null;
 
-  const content = normalizeMediaContent(requestBody.content || {}, openapiDoc);
+  if (requestBody.$ref) {
+    const ref = requestBody.$ref;
+    if (seenRefs.has(ref)) return null;
+
+    const resolved = resolveRef(ref, openapiDoc);
+    if (!resolved) return null;
+
+    const nextSeen = new Set(seenRefs);
+    nextSeen.add(ref);
+
+    const deref = resolveRequestBodyObject(resolved, openapiDoc, nextSeen);
+    if (!deref) return null;
+
+    return {
+      ...clone(deref),
+      ...Object.fromEntries(
+        Object.entries(requestBody).filter(([k]) => k !== "$ref"),
+      ),
+    };
+  }
+
+  return clone(requestBody);
+}
+
+function normalizeRequestBody(requestBody, openapiDoc) {
+  const body = resolveRequestBodyObject(requestBody, openapiDoc);
+  if (!isObject(body)) return null;
+
+  const content = normalizeMediaContent(body.content || {}, openapiDoc);
+
   const preferredType = content["application/json"]
     ? "application/json"
     : content["application/*+json"]
@@ -231,17 +374,41 @@ function normalizeRequestBody(requestBody, openapiDoc) {
           : Object.keys(content)[0] || null;
 
   return {
-    required: !!requestBody.required,
-    description: requestBody.description
-      ? String(requestBody.description).slice(0, 240)
-      : "",
+    required: !!body.required,
+    description: body.description ? String(body.description).slice(0, 240) : "",
     content,
     preferredContentType: preferredType,
   };
 }
 
+function resolveResponseObject(resp, openapiDoc, seenRefs = new Set()) {
+  if (!isObject(resp)) return null;
+
+  if (resp.$ref) {
+    const ref = resp.$ref;
+    if (seenRefs.has(ref)) return null;
+
+    const resolved = resolveRef(ref, openapiDoc);
+    if (!resolved) return null;
+
+    const nextSeen = new Set(seenRefs);
+    nextSeen.add(ref);
+
+    const deref = resolveResponseObject(resolved, openapiDoc, nextSeen);
+    if (!deref) return null;
+
+    return {
+      ...clone(deref),
+      ...Object.fromEntries(Object.entries(resp).filter(([k]) => k !== "$ref")),
+    };
+  }
+
+  return clone(resp);
+}
+
 function pickBestResponse(op, openapiDoc) {
   const responses = isObject(op?.responses) ? op.responses : {};
+
   const preferredStatus = responses["200"]
     ? "200"
     : responses["201"]
@@ -256,8 +423,11 @@ function pickBestResponse(op, openapiDoc) {
 
   if (!preferredStatus) return null;
 
-  const chosen = responses[preferredStatus];
-  const content = normalizeMediaContent(chosen?.content || {}, openapiDoc);
+  const chosen = resolveResponseObject(responses[preferredStatus], openapiDoc);
+  if (!chosen) return null;
+
+  const content = normalizeMediaContent(chosen.content || {}, openapiDoc);
+
   const preferredContentType = content["application/json"]
     ? "application/json"
     : content["application/*+json"]
@@ -266,7 +436,7 @@ function pickBestResponse(op, openapiDoc) {
 
   return {
     status: preferredStatus,
-    description: chosen?.description
+    description: chosen.description
       ? String(chosen.description).slice(0, 240)
       : "",
     contentType: preferredContentType,

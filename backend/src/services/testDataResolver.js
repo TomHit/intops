@@ -271,8 +271,16 @@ function resolveValidValue(schema = {}, fieldName = "") {
       schema.items || { type: "string" },
       fieldName ? `${fieldName}_item` : "item",
     );
+
+    const minItems = Number.isInteger(schema.minItems) ? schema.minItems : 1;
+    const arr = [];
+
+    for (let i = 0; i < Math.max(minItems, 1); i++) {
+      arr.push(clone(itemResolved.value));
+    }
+
     return {
-      value: [itemResolved.value],
+      value: arr,
       source: `array:${itemResolved.source}`,
     };
   }
@@ -403,6 +411,7 @@ function toRequestShape(valid) {
     path_params: clone(valid.path),
     query_params: clone(valid.query),
     headers: clone(valid.headers),
+    cookies: clone(valid.cookies),
     request_body: clone(valid.body),
   };
 }
@@ -443,6 +452,7 @@ export function resolveEndpointTestData(endpoint) {
       path: {},
       query: {},
       headers: {},
+      cookies: {},
       body: undefined,
     },
     negative: {
@@ -462,6 +472,7 @@ export function resolveEndpointTestData(endpoint) {
     { key: "path", fields: endpoint?.params?.path || [] },
     { key: "query", fields: endpoint?.params?.query || [] },
     { key: "headers", fields: endpoint?.params?.header || [] },
+    { key: "cookies", fields: endpoint?.params?.cookie || [] },
   ];
 
   for (const group of groups) {
@@ -484,14 +495,30 @@ export function resolveEndpointTestData(endpoint) {
       result.sourceMap[`${group.key}.${field.name}`] = resolved.source;
     }
   }
+  // Default headers for manual execution
+  if (!result.valid.headers["Accept"]) {
+    result.valid.headers["Accept"] = "application/json";
+    result.sourceMap["headers.Accept"] = "default_header";
+  }
+
+  if (!result.valid.headers["Content-Type"] && endpoint?.requestBody) {
+    result.valid.headers["Content-Type"] =
+      endpoint.requestBody.preferredContentType || "application/json";
+    result.sourceMap["headers.Content-Type"] = "default_header";
+  }
 
   const preferredBodyType = endpoint?.requestBody?.preferredContentType;
   const preferredBody = preferredBodyType
     ? endpoint?.requestBody?.content?.[preferredBodyType]
     : null;
+  const bodyExample = firstDefined(
+    preferredBody?.example,
+    pickExample(preferredBody),
+    pickExample(preferredBody?.schema),
+  );
 
-  if (preferredBody?.example !== undefined) {
-    result.valid.body = clone(preferredBody.example);
+  if (bodyExample !== undefined) {
+    result.valid.body = clone(bodyExample);
     result.sourceMap.body = "request_body_example";
   } else if (preferredBody?.schema) {
     const resolvedBody = resolveValidValue(
@@ -505,6 +532,22 @@ export function resolveEndpointTestData(endpoint) {
   for (const group of groups) {
     for (const field of group.fields) {
       const schema = field?.schema || {};
+      // Path params should be realistic values
+      if (group.key === "path") {
+        if (schema.format === "uuid") {
+          result.valid[group.key][field.name] =
+            "123e4567-e89b-12d3-a456-426614174000";
+          result.sourceMap[`${group.key}.${field.name}`] = "path_uuid_sample";
+          continue;
+        }
+
+        if (schema.type === "integer") {
+          result.valid[group.key][field.name] = 123;
+          result.sourceMap[`${group.key}.${field.name}`] =
+            "path_integer_sample";
+          continue;
+        }
+      }
       const fieldName = field.name;
       const validValue = result.valid[group.key][fieldName];
 
@@ -598,6 +641,7 @@ export function resolveEndpointTestData(endpoint) {
           path_params: clone(result.valid.path),
           query_params: clone(result.valid.query),
           headers: clone(result.valid.headers),
+          cookies: clone(result.valid.cookies),
           request_body: clone(bodyNeg.requestBody),
         },
       });

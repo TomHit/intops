@@ -6,6 +6,7 @@ import { generateCasesForEndpoints } from "./templateEngine.js";
 import { validateTestPlanOrThrow } from "./schemaValidate.js";
 import { buildReport } from "./report.js";
 import { createCaseIdGenerator } from "./caseIdGenerator.js";
+import { validateSpecQuality } from "./specQualityValidator.js";
 
 const SCHEMA_SHAPE_GUIDE = `
 Return ONLY JSON.
@@ -87,7 +88,33 @@ function inferCaseEndpoint(testCase, suiteEndpoints, endpointMap) {
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
+function getManualSafetyMode(payload) {
+  const mode = String(payload?.generation_mode || "balanced").toLowerCase();
+  if (mode === "strict") return "strict";
+  return "balanced";
+}
 
+function filterEndpointsByQuality(allEndpoints, quality, mode = "balanced") {
+  const endpointStatusMap = new Map(
+    (quality?.endpoint_results || []).map((r) => [r.endpoint_id, r.status]),
+  );
+
+  const allowedStatuses =
+    mode === "strict" ? new Set(["ready"]) : new Set(["ready", "partial"]);
+
+  return allEndpoints.filter((e) =>
+    allowedStatuses.has(endpointStatusMap.get(e.id)),
+  );
+}
+
+function summarizeBlockedQuality(quality, mode = "balanced") {
+  const blockedStatuses =
+    mode === "strict" ? new Set(["partial", "blocked"]) : new Set(["blocked"]);
+
+  return (quality?.endpoint_results || []).filter((r) =>
+    blockedStatuses.has(r.status),
+  );
+}
 function enrichSuitesWithCaseIds(plan, allEndpoints) {
   if (!plan || !Array.isArray(plan.suites)) return plan;
 
@@ -305,6 +332,47 @@ export async function generateTestPlan(payload) {
     };
     throw err;
   }
+  // -----------------------------------------
+  // Spec quality validation before generation
+  // -----------------------------------------
+  const generationMode = getManualSafetyMode(payload); // "balanced" | "strict"
+  const specQuality = validateSpecQuality(doc, endpointRecords);
+
+  const blockedForMode = summarizeBlockedQuality(specQuality, generationMode);
+  const eligibleEndpointRecords = filterEndpointsByQuality(
+    endpointRecords,
+    specQuality,
+    generationMode,
+  );
+
+  console.log("SPEC QUALITY SUMMARY:", specQuality.summary);
+  console.log(
+    "SPEC QUALITY ENDPOINT STATUS:",
+    (specQuality.endpoint_results || []).map((r) => ({
+      endpoint_id: r.endpoint_id,
+      status: r.status,
+      issues_count: r.issues_count,
+    })),
+  );
+
+  if (eligibleEndpointRecords.length === 0) {
+    const err = new Error(
+      generationMode === "strict"
+        ? "No endpoints are eligible for strict generation. Spec improvement required."
+        : "No endpoints are eligible for generation. Spec improvement required.",
+    );
+
+    err.details = {
+      generation_mode: generationMode,
+      spec_quality: specQuality,
+      blocked_endpoints: blockedForMode,
+      selected_endpoints: endpointRecords.map(
+        (e) => `${String(e.method).toUpperCase()} ${e.path}`,
+      ),
+    };
+
+    throw err;
+  }
 
   console.log("GENERATOR ENDPOINTS COUNT:", allEndpoints.length);
   console.log(
@@ -330,7 +398,7 @@ export async function generateTestPlan(payload) {
   const prompt = buildGeneratorPrompt({
     project: projectBlock,
     options,
-    endpointRecords,
+    endpointRecords: eligibleEndpointRecords,
     schemaText: SCHEMA_SHAPE_GUIDE,
   });
 
@@ -344,7 +412,7 @@ export async function generateTestPlan(payload) {
   const deterministic = await buildDeterministicTestPlan({
     project: projectBlock,
     options,
-    endpoints: endpointRecords,
+    endpoints: eligibleEndpointRecords,
     caseIdGen,
   });
 
@@ -432,13 +500,19 @@ export async function generateTestPlan(payload) {
 
   if (!Array.isArray(obj.suites) || obj.suites.length === 0) {
     const err = new Error(
-      "No test cases were generated for the selected endpoints and include types",
+      "No test cases were generated for the eligible endpoints and include types",
     );
     err.details = {
+      generation_mode: generationMode,
       selected_endpoints: endpointRecords.map(
         (e) => `${String(e.method).toUpperCase()} ${e.path}`,
       ),
+      eligible_endpoints: eligibleEndpointRecords.map(
+        (e) => `${String(e.method).toUpperCase()} ${e.path}`,
+      ),
+      blocked_endpoints: blockedForMode,
       include,
+      spec_quality: specQuality,
     };
     throw err;
   }
@@ -449,6 +523,14 @@ export async function generateTestPlan(payload) {
 
   return {
     run_id: `run_${Date.now()}`,
+    generation_mode: generationMode,
+    spec_quality: specQuality,
+    blocked_endpoints: blockedForMode,
+    eligible_endpoints: eligibleEndpointRecords.map((e) => ({
+      method: String(e.method).toUpperCase(),
+      path: e.path,
+      id: e.id,
+    })),
     testplan: obj,
     report,
   };
