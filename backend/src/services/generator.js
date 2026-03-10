@@ -88,6 +88,207 @@ function inferCaseEndpoint(testCase, suiteEndpoints, endpointMap) {
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
+function detectResponseProfile(endpoint) {
+  const status = String(endpoint?.response?.status || "");
+  const contentType = String(
+    endpoint?.response?.contentType || "",
+  ).toLowerCase();
+
+  if (status === "204" || !contentType) {
+    return { kind: "empty", contentType, status };
+  }
+
+  if (contentType.includes("text/html")) {
+    return { kind: "html", contentType, status };
+  }
+
+  if (
+    contentType.includes("application/json") ||
+    contentType.includes("+json")
+  ) {
+    return { kind: "json", contentType, status };
+  }
+
+  if (
+    contentType.includes("application/pdf") ||
+    contentType.includes("application/octet-stream") ||
+    contentType.includes("image/") ||
+    contentType.includes("text/csv") ||
+    contentType.includes("application/zip")
+  ) {
+    return { kind: "binary", contentType, status };
+  }
+
+  return { kind: "other", contentType, status };
+}
+
+function buildCanonicalValidationByResponse(endpoint) {
+  const method = String(endpoint?.method || "GET").toUpperCase();
+  const path = endpoint?.path || "/";
+  const profile = detectResponseProfile(endpoint);
+
+  const baseSteps = [
+    "Open an API client such as Postman or any approved API testing tool.",
+    `Select the ${method} method.`,
+    `Enter the endpoint URL using the configured base URL and path ${path}.`,
+  ];
+
+  const hasPathParams =
+    Array.isArray(endpoint?.params?.path) && endpoint.params.path.length > 0;
+  const hasQueryParams =
+    Array.isArray(endpoint?.params?.query) && endpoint.params.query.length > 0;
+  const hasHeaders =
+    Array.isArray(endpoint?.params?.header) &&
+    endpoint.params.header.length > 0;
+  const hasCookies =
+    Array.isArray(endpoint?.params?.cookie) &&
+    endpoint.params.cookie.length > 0;
+  const hasBody = !!endpoint?.requestBody;
+
+  if (hasPathParams) {
+    baseSteps.push("Add all required path parameter values.");
+  }
+  if (hasQueryParams) {
+    baseSteps.push("Add all required query parameter values.");
+  }
+  if (hasHeaders) {
+    baseSteps.push("Add all required header values.");
+  }
+  if (hasCookies) {
+    baseSteps.push("Add all required cookie values.");
+  }
+  if (hasBody) {
+    baseSteps.push("Provide the request body using the generated test data.");
+  }
+
+  baseSteps.push("Send the request.");
+
+  if (profile.kind === "html") {
+    return {
+      steps: baseSteps,
+      expected_results: [
+        `The API responds with HTTP ${profile.status || "200"}.`,
+        `The response Content-Type contains "${profile.contentType || "text/html"}".`,
+        "The response body is returned as an HTML document.",
+        "The response body is not empty.",
+        "The response contains HTML markup such as <html>, <head>, or <body>.",
+      ],
+      validation_focus: [
+        "HTTP success status",
+        "Response content type",
+        "HTML document returned",
+        "Response body presence",
+      ],
+    };
+  }
+
+  if (profile.kind === "json") {
+    return {
+      steps: baseSteps,
+      expected_results: [
+        `The API responds with HTTP ${profile.status || "200"}.`,
+        `The response Content-Type contains "${profile.contentType || "application/json"}".`,
+        "The response body is valid JSON.",
+        "The response structure matches the documented API contract.",
+      ],
+      validation_focus: [
+        "HTTP success status",
+        "Response content type",
+        "JSON contract validation",
+        "Required response structure",
+      ],
+    };
+  }
+
+  if (profile.kind === "binary") {
+    return {
+      steps: baseSteps,
+      expected_results: [
+        `The API responds with HTTP ${profile.status || "200"}.`,
+        `The response Content-Type contains "${profile.contentType}".`,
+        "The response body is returned as a file or binary stream.",
+        "The downloaded response is not empty.",
+      ],
+      validation_focus: [
+        "HTTP success status",
+        "Response content type",
+        "Binary/file response validation",
+        "Response size or presence",
+      ],
+    };
+  }
+
+  if (profile.kind === "empty") {
+    return {
+      steps: baseSteps,
+      expected_results: [
+        `The API responds with HTTP ${profile.status || "204"}.`,
+        "The response body is empty.",
+        "The operation completes successfully.",
+      ],
+      validation_focus: [
+        "HTTP success status",
+        "No-content response validation",
+        "Operation success",
+      ],
+    };
+  }
+
+  return {
+    steps: baseSteps,
+    expected_results: [
+      `The API responds with HTTP ${profile.status || "200"}.`,
+      "The response matches the documented API contract.",
+    ],
+    validation_focus: ["HTTP success status", "Response contract validation"],
+  };
+}
+
+function applyResponseAwareCaseNormalization(plan, endpoints) {
+  if (!plan || !Array.isArray(plan.suites)) return plan;
+
+  const endpointMap = buildEndpointMap(endpoints);
+
+  for (const suite of plan.suites) {
+    suite.cases = ensureArray(suite.cases).map((testCase) => {
+      const method =
+        testCase?.api_details?.method ||
+        testCase?.method ||
+        testCase?.request?.method ||
+        "GET";
+
+      const path =
+        testCase?.api_details?.path ||
+        testCase?.path ||
+        testCase?.request?.path ||
+        "";
+
+      const endpoint = endpointMap.get(endpointKey(method, path));
+      if (!endpoint) return testCase;
+
+      const canonical = buildCanonicalValidationByResponse(endpoint);
+      const profile = detectResponseProfile(endpoint);
+
+      // Always normalize for non-JSON response types because generic JSON checks are wrong there.
+      if (
+        profile.kind === "html" ||
+        profile.kind === "binary" ||
+        profile.kind === "empty"
+      ) {
+        return {
+          ...testCase,
+          steps: canonical.steps,
+          expected_results: canonical.expected_results,
+          validation_focus: canonical.validation_focus,
+        };
+      }
+
+      return testCase;
+    });
+  }
+
+  return plan;
+}
 function getManualSafetyMode(payload) {
   const mode = String(payload?.generation_mode || "balanced").toLowerCase();
   if (mode === "strict") return "strict";
@@ -520,6 +721,7 @@ export async function generateTestPlan(payload) {
     : projectBlock.auth_vars;
 
   obj = enrichSuitesWithCaseIds(obj, allEndpoints);
+  obj = applyResponseAwareCaseNormalization(obj, allEndpoints);
   obj = filterGeneratedPlanToEligibleEndpoints(obj, eligibleEndpointRecords);
 
   console.log(
@@ -558,7 +760,14 @@ export async function generateTestPlan(payload) {
     run_id: `run_${Date.now()}`,
     generation_mode: generationMode,
     spec_quality: specQuality,
-    blocked_endpoints: blockedForMode,
+    blocked_endpoints: blockedForMode.map((ep) => ({
+      endpoint_id: ep.endpoint_id,
+      method: ep.method,
+      path: ep.path,
+      status: ep.status,
+      issues_count: ep.issues_count,
+      issues: Array.isArray(ep.issues) ? ep.issues : [],
+    })),
     eligible_endpoints: eligibleEndpointRecords.map((e) => ({
       method: String(e.method).toUpperCase(),
       path: e.path,

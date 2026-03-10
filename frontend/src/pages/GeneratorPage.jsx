@@ -103,6 +103,16 @@ function getPrimaryIssueText(endpointResult) {
   );
 }
 
+function getSuggestedFix(endpointResult) {
+  if (!endpointResult?.issues || endpointResult.issues.length === 0)
+    return null;
+
+  for (const issue of endpointResult.issues) {
+    if (issue?.suggested_fix) return issue.suggested_fix;
+  }
+
+  return null;
+}
 export default function GeneratorPage({ projectId, onBack }) {
   const [endpointsLoading, setEndpointsLoading] = useState(true);
   const [endpointsErr, setEndpointsErr] = useState("");
@@ -189,7 +199,16 @@ export default function GeneratorPage({ projectId, onBack }) {
       return;
     }
 
-    setRun((r) => ({ ...r, status: "running", error: null }));
+    setRun((r) => ({
+      ...r,
+      status: "running",
+      error: null,
+      spec_quality: null,
+      blocked_endpoints: [],
+      eligible_endpoints: [],
+      testplan: null,
+      report: null,
+    }));
 
     const endpointRefs = endpoints
       .filter((e) => selected.includes(e.id))
@@ -220,7 +239,11 @@ export default function GeneratorPage({ projectId, onBack }) {
       const data = safeJsonParse(text);
 
       if (!res.ok) {
-        throw new Error(data?.message || `Generate failed: ${res.status}`);
+        const err = new Error(
+          data?.message || `Generate failed: ${res.status}`,
+        );
+        err.details = data?.details || null;
+        throw err;
       }
 
       setRun({
@@ -243,10 +266,21 @@ export default function GeneratorPage({ projectId, onBack }) {
       setRun((r) => ({
         ...r,
         status: "error",
-        error: { message: e.message || String(e) },
-        spec_quality: null,
-        blocked_endpoints: [],
-        eligible_endpoints: [],
+        error: {
+          message: e.message || String(e),
+          details: e.details || null,
+        },
+        generation_mode:
+          e.details?.generation_mode || r.generation_mode || "balanced",
+        spec_quality: e.details?.spec_quality || null,
+        blocked_endpoints: Array.isArray(e.details?.blocked_endpoints)
+          ? e.details.blocked_endpoints
+          : [],
+        eligible_endpoints: Array.isArray(e.details?.eligible_endpoints)
+          ? e.details.eligible_endpoints
+          : [],
+        testplan: null,
+        report: null,
       }));
     }
   }
@@ -371,6 +405,12 @@ export default function GeneratorPage({ projectId, onBack }) {
                   {" · "}
                   <b>Blocked for mode:</b> {run.blocked_endpoints?.length ?? 0}
                 </div>
+                {run.blocked_endpoints?.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#8a5a00" }}>
+                    Some selected endpoints were excluded for the current
+                    generation mode due to spec issues.
+                  </div>
+                )}
 
                 {run.blocked_endpoints?.length > 0 && (
                   <div style={{ marginTop: 10 }}>
@@ -397,6 +437,25 @@ export default function GeneratorPage({ projectId, onBack }) {
                           <div style={styles.issueText}>
                             {getPrimaryIssueText(ep)}
                           </div>
+
+                          {getSuggestedFix(ep) && (
+                            <div style={styles.fixBox}>
+                              <div style={styles.fixTitle}>Suggested Fix</div>
+
+                              {getSuggestedFix(ep)?.type && (
+                                <div style={styles.fixMeta}>
+                                  Type: {getSuggestedFix(ep).type}
+                                  {getSuggestedFix(ep)?.format
+                                    ? ` · Format: ${getSuggestedFix(ep).format}`
+                                    : ""}
+                                </div>
+                              )}
+
+                              <pre style={styles.fixCode}>
+                                {getSuggestedFix(ep)?.content || ""}
+                              </pre>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -432,7 +491,12 @@ export default function GeneratorPage({ projectId, onBack }) {
 
             {run.status === "error" && (
               <div style={styles.err}>
-                Error: {run.error?.message || "Unknown error"}
+                <div>Error: {run.error?.message || "Unknown error"}</div>
+                {run.blocked_endpoints?.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 13 }}>
+                    See Spec Analysis below for the exact endpoint issue.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -618,5 +682,31 @@ const styles = {
   },
   issueText: {
     fontSize: 13,
+  },
+  fixBox: {
+    marginTop: 10,
+    border: "1px solid #d8dee9",
+    background: "#f8fafc",
+    borderRadius: 10,
+    padding: 10,
+  },
+  fixTitle: {
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  fixMeta: {
+    fontSize: 12,
+    opacity: 0.75,
+    marginBottom: 6,
+  },
+  fixCode: {
+    margin: 0,
+    background: "#0b1020",
+    color: "#e5e7eb",
+    padding: 10,
+    borderRadius: 8,
+    overflow: "auto",
+    fontSize: 12,
+    whiteSpace: "pre-wrap",
   },
 };

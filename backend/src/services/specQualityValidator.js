@@ -275,11 +275,16 @@ function validateRequestBody(endpoint, issues) {
 
   const hasProperties =
     isObject(schema.properties) && Object.keys(schema.properties).length > 0;
-  const isFreeFormObject =
-    schema.type === "object" &&
-    !hasProperties &&
-    schema.additionalProperties === true;
+  const hasExample =
+    schema.example !== undefined || schema.examples !== undefined;
+  const allowsAdditional =
+    schema.additionalProperties === true ||
+    schema.additionalProperties === undefined;
 
+  const isFreeFormObject =
+    (schema.type === "object" || schema.type === undefined) &&
+    !hasProperties &&
+    allowsAdditional;
   if (isFreeFormObject) {
     issues.push(
       makeIssue({
@@ -298,8 +303,8 @@ function validateRequestBody(endpoint, issues) {
   if (
     schema.type === "object" &&
     !hasProperties &&
-    schema.additionalProperties !== true &&
-    schema.example === undefined
+    !hasExample &&
+    !allowsAdditional
   ) {
     issues.push(
       makeIssue({
