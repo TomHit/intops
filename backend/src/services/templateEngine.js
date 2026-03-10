@@ -17,6 +17,164 @@ function mergeObjects(base, extra) {
   };
 }
 
+function detectUniversalNegativeTemplateKeys(endpoint) {
+  const out = new Set();
+
+  const queryParams = endpoint?.params?.query || [];
+  const pathParams = endpoint?.params?.path || [];
+  const headerParams = endpoint?.params?.header || [];
+  const preferredBodyType = endpoint?.requestBody?.preferredContentType;
+  const bodySchema = preferredBodyType
+    ? endpoint?.requestBody?.content?.[preferredBodyType]?.schema
+    : null;
+
+  if (queryParams.some((p) => p?.required)) {
+    out.add("negative.missing_required_query");
+  }
+
+  if (pathParams.some((p) => p?.required)) {
+    out.add("negative.missing_required_path");
+  }
+
+  if (
+    queryParams.some((p) => {
+      const s = p?.schema || {};
+      return !!s.type || !!s.format;
+    })
+  ) {
+    out.add("negative.invalid_query_type");
+  }
+
+  const hasEnum = (fields = []) =>
+    fields.some(
+      (p) => Array.isArray(p?.schema?.enum) && p.schema.enum.length > 0,
+    );
+
+  if (hasEnum(queryParams) || hasEnum(pathParams) || hasEnum(headerParams)) {
+    out.add("negative.invalid_enum");
+  }
+
+  const hasFormat = (fields = []) =>
+    fields.some((p) => {
+      const s = p?.schema || {};
+      return !!s.format || !!s.pattern;
+    });
+
+  if (
+    hasFormat(queryParams) ||
+    hasFormat(pathParams) ||
+    hasFormat(headerParams)
+  ) {
+    out.add("negative.invalid_format");
+  }
+
+  const hasStringMaxLength = (fields = []) =>
+    fields.some((p) => typeof p?.schema?.maxLength === "number");
+
+  if (
+    hasStringMaxLength(queryParams) ||
+    hasStringMaxLength(pathParams) ||
+    hasStringMaxLength(headerParams)
+  ) {
+    out.add("negative.string_too_long");
+  }
+
+  const hasNumericMaximum = (fields = []) =>
+    fields.some((p) => typeof p?.schema?.maximum === "number");
+
+  if (
+    hasNumericMaximum(queryParams) ||
+    hasNumericMaximum(pathParams) ||
+    hasNumericMaximum(headerParams)
+  ) {
+    out.add("negative.numeric_above_maximum");
+  }
+
+  if (endpoint?.requestBody?.required) {
+    out.add("negative.empty_body");
+  }
+
+  if (
+    preferredBodyType &&
+    String(preferredBodyType).includes("json") &&
+    bodySchema
+  ) {
+    out.add("negative.invalid_content_type");
+    out.add("negative.malformed_json");
+  }
+
+  if (bodySchema && (bodySchema.type === "object" || bodySchema.properties)) {
+    out.add("negative.additional_property");
+  }
+
+  if (
+    bodySchema &&
+    Array.isArray(bodySchema.required) &&
+    bodySchema.required.length > 0
+  ) {
+    out.add("negative.null_required_field");
+  }
+
+  const queryNames = queryParams.map((p) =>
+    String(p?.name || "").toLowerCase(),
+  );
+  if (
+    queryNames.some((n) =>
+      [
+        "page",
+        "limit",
+        "offset",
+        "pagesize",
+        "page_size",
+        "per_page",
+        "cursor",
+        "size",
+      ].includes(n),
+    )
+  ) {
+    out.add("negative.invalid_pagination");
+  }
+
+  if (pathParams.length > 0) {
+    out.add("negative.resource_not_found");
+  }
+
+  return Array.from(out);
+}
+
+function buildUniversalNegativeCases(endpoint) {
+  const templateKeys = detectUniversalNegativeTemplateKeys(endpoint);
+  const cases = [];
+
+  for (const templateKey of templateKeys) {
+    const fn = TEMPLATE_REGISTRY[templateKey];
+    if (!fn) continue;
+
+    const pseudoRule = {
+      rule_id: `AUTO_${templateKey}`,
+      category: "negative",
+      scenario: `Auto-generated negative case for ${templateKey}`,
+      template_key: templateKey,
+      notes: "Generated automatically from endpoint schema",
+    };
+
+    try {
+      const tc = annotateCase(fn(endpoint), pseudoRule, endpoint);
+      if (tc) {
+        tc.references = ensureArray(tc.references);
+        tc.references.push("auto_generated:universal_negative");
+        cases.push(tc);
+      }
+    } catch (err) {
+      console.error(
+        `Universal negative template build failed: ${templateKey}`,
+        err,
+      );
+    }
+  }
+
+  return cases;
+}
 function inferResolvedTestData(templateKey, endpoint) {
   const resolved =
     endpoint?._resolvedTestData || resolveEndpointTestData(endpoint);
@@ -76,6 +234,12 @@ function inferResolvedTestData(templateKey, endpoint) {
         validRequest
       );
 
+    case "negative.null_required_field":
+      return (
+        firstItem(resolved?.negative?.nullRequiredField)?.request ||
+        validRequest
+      );
+
     case "negative.invalid_content_type":
       return {
         ...validRequest,
@@ -95,23 +259,6 @@ function inferResolvedTestData(templateKey, endpoint) {
         request_body: "{invalid-json",
       };
 
-    case "negative.null_required_field": {
-      const body = resolved?.valid?.body;
-      if (body && typeof body === "object" && !Array.isArray(body)) {
-        const firstField = Object.keys(body)[0];
-        if (firstField) {
-          return {
-            ...validRequest,
-            request_body: {
-              ...body,
-              [firstField]: null,
-            },
-          };
-        }
-      }
-      return validRequest;
-    }
-
     case "negative.additional_property": {
       const body = resolved?.valid?.body;
       if (body && typeof body === "object" && !Array.isArray(body)) {
@@ -124,6 +271,133 @@ function inferResolvedTestData(templateKey, endpoint) {
         };
       }
       return validRequest;
+    }
+
+    case "negative.invalid_pagination": {
+      const query = { ...(validRequest.query_params || {}) };
+
+      if ("page" in query) query.page = -1;
+      else if ("limit" in query) query.limit = -1;
+      else if ("offset" in query) query.offset = -1;
+      else if ("page_size" in query) query.page_size = -1;
+      else if ("pagesize" in query) query.pagesize = -1;
+      else if ("per_page" in query) query.per_page = -1;
+      else if ("size" in query) query.size = -1;
+      else if ("cursor" in query) query.cursor = "invalid-cursor";
+      else query.page = -1;
+
+      return {
+        ...validRequest,
+        query_params: query,
+      };
+    }
+
+    case "negative.resource_not_found": {
+      const pathParams = { ...(validRequest.path_params || {}) };
+      const keys = Object.keys(pathParams);
+
+      if (keys.length > 0) {
+        pathParams[keys[0]] = "999999999";
+      } else {
+        pathParams.id = "999999999";
+      }
+
+      return {
+        ...validRequest,
+        path_params: pathParams,
+      };
+    }
+
+    case "negative.conflict": {
+      const body = resolved?.valid?.body;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        return {
+          ...validRequest,
+          request_body: {
+            ...body,
+          },
+        };
+      }
+      return validRequest;
+    }
+
+    case "negative.rate_limit":
+      return validRequest;
+
+    case "negative.unsupported_method":
+      return validRequest;
+
+    case "auth.missing_credentials": {
+      const headers = { ...(validRequest.headers || {}) };
+
+      delete headers.Authorization;
+      delete headers.authorization;
+      delete headers["X-API-Key"];
+      delete headers["x-api-key"];
+      delete headers.Cookie;
+      delete headers.cookie;
+
+      return {
+        ...validRequest,
+        headers,
+      };
+    }
+
+    case "auth.invalid_credentials": {
+      const headers = { ...(validRequest.headers || {}) };
+
+      if ("Authorization" in headers || "authorization" in headers) {
+        headers.Authorization = "Bearer invalid-token";
+        delete headers.authorization;
+      } else if ("X-API-Key" in headers || "x-api-key" in headers) {
+        headers["X-API-Key"] = "invalid-api-key";
+        delete headers["x-api-key"];
+      } else if ("Cookie" in headers || "cookie" in headers) {
+        headers.Cookie = "session=invalid-session";
+        delete headers.cookie;
+      } else {
+        headers.Authorization = "Bearer invalid-token";
+      }
+
+      return {
+        ...validRequest,
+        headers,
+      };
+    }
+
+    case "auth.expired_credentials": {
+      const headers = { ...(validRequest.headers || {}) };
+
+      if ("Authorization" in headers || "authorization" in headers) {
+        headers.Authorization = "Bearer expired-token";
+        delete headers.authorization;
+      } else if ("Cookie" in headers || "cookie" in headers) {
+        headers.Cookie = "session=expired-session";
+        delete headers.cookie;
+      } else {
+        headers.Authorization = "Bearer expired-token";
+      }
+
+      return {
+        ...validRequest,
+        headers,
+      };
+    }
+
+    case "auth.forbidden_role": {
+      const headers = { ...(validRequest.headers || {}) };
+
+      if ("Authorization" in headers || "authorization" in headers) {
+        headers.Authorization = "Bearer valid-but-low-privilege-token";
+        delete headers.authorization;
+      } else {
+        headers.Authorization = "Bearer valid-but-low-privilege-token";
+      }
+
+      return {
+        ...validRequest,
+        headers,
+      };
     }
 
     default:
@@ -247,6 +521,13 @@ function resolveLegacyTemplateKey(rule) {
       appliesWhen === "response_has_required_fields"
     ) {
       return "contract.required_fields";
+    }
+
+    if (
+      ruleId === "CONTRACT_004" ||
+      appliesWhen === "endpoint_has_documented_success_status"
+    ) {
+      return "contract.status_code";
     }
 
     if (
@@ -398,6 +679,80 @@ function resolveLegacyTemplateKey(rule) {
       return "negative.missing_required_path";
     }
 
+    if (
+      ruleId === "NEGATIVE_003" ||
+      appliesWhen === "query_params_have_typed_schema"
+    ) {
+      return "negative.invalid_query_type";
+    }
+
+    if (
+      ruleId === "NEGATIVE_004" ||
+      appliesWhen === "response_or_request_schema_has_enum" ||
+      appliesWhen === "query_or_body_has_enum"
+    ) {
+      return "negative.invalid_enum";
+    }
+
+    if (
+      ruleId === "NEGATIVE_005" ||
+      appliesWhen === "schema_has_string_format" ||
+      appliesWhen === "schema_has_date_or_datetime_fields" ||
+      appliesWhen === "query_or_body_has_format"
+    ) {
+      return "negative.invalid_format";
+    }
+
+    if (
+      ruleId === "NEGATIVE_006" ||
+      appliesWhen === "schema_has_string_constraints" ||
+      appliesWhen === "query_or_body_has_string_max_length"
+    ) {
+      return "negative.string_too_long";
+    }
+
+    if (
+      ruleId === "NEGATIVE_007" ||
+      appliesWhen === "schema_has_numeric_constraints" ||
+      appliesWhen === "query_or_body_has_numeric_maximum"
+    ) {
+      return "negative.numeric_above_maximum";
+    }
+
+    if (
+      ruleId === "NEGATIVE_008" ||
+      appliesWhen === "request_body_schema_controls_additional_properties" ||
+      appliesWhen === "request_body_is_object"
+    ) {
+      return "negative.additional_property";
+    }
+
+    if (ruleId === "NEGATIVE_009" || appliesWhen === "endpoint_can_conflict") {
+      return "negative.conflict";
+    }
+
+    if (
+      ruleId === "NEGATIVE_010" ||
+      appliesWhen === "endpoint_has_rate_limit_contract"
+    ) {
+      return "negative.rate_limit";
+    }
+
+    if (
+      ruleId === "NEGATIVE_011" ||
+      appliesWhen === "endpoint_has_pagination_params" ||
+      appliesWhen === "endpoint_has_pagination"
+    ) {
+      return "negative.invalid_pagination";
+    }
+
+    if (
+      ruleId === "NEGATIVE_012" ||
+      appliesWhen === "request_body_has_required_fields"
+    ) {
+      return "negative.null_required_field";
+    }
+
     if (ruleId === "NEGATIVE_018" || appliesWhen === "endpoint_exists") {
       return "negative.unsupported_method";
     }
@@ -424,6 +779,7 @@ function resolveLegacyTemplateKey(rule) {
     ) {
       return "negative.resource_not_found";
     }
+
     if (ruleId === "NEGATIVE_014" || appliesWhen === "endpoint_requires_auth") {
       return "auth.missing_credentials";
     }
@@ -471,7 +827,6 @@ function resolveLegacyTemplateKey(rule) {
 
   return "";
 }
-
 function getTemplateKey(rule) {
   const direct = String(rule?.template_key || "").trim();
   if (direct) return direct;
@@ -628,6 +983,15 @@ export async function generateCasesForEndpoint(endpoint, options = {}) {
     } catch (err) {
       console.error(`Template build failed for CSV rule: ${rule.rule_id}`, err);
     }
+  }
+
+  const include = Array.isArray(options?.include)
+    ? options.include.map((x) => String(x).toLowerCase())
+    : ["contract", "schema"];
+
+  if (include.includes("negative")) {
+    const autoNegativeCases = buildUniversalNegativeCases(enrichedEndpoint);
+    cases.push(...autoNegativeCases);
   }
 
   return dedupeCases(cases);

@@ -24,8 +24,9 @@ function pickExample(source) {
     }
     if (isObject(source.examples)) {
       const first = Object.values(source.examples)[0];
-      if (isObject(first) && first.value !== undefined)
+      if (isObject(first) && first.value !== undefined) {
         return clone(first.value);
+      }
       if (first !== undefined) return clone(first);
     }
   }
@@ -35,12 +36,88 @@ function pickExample(source) {
 
 function inferStringFromPattern(pattern) {
   if (!pattern || typeof pattern !== "string") return undefined;
+
   if (pattern === "^[A-Z]{3}$") return "ABC";
   if (pattern === "^[A-Z]{2,5}$") return "TEST";
+  if (pattern === "^\\d{10}$") return "9876543210";
+  if (pattern === "^\\d{6}$") return "123456";
+  if (pattern.includes("@")) return "qa@example.com";
+
   return undefined;
 }
 
-function resolveValidPrimitive(schema = {}) {
+function fieldNameHints(fieldName = "") {
+  const n = String(fieldName || "").toLowerCase();
+
+  if (n === "email" || n.endsWith("_email") || n.includes("email")) {
+    return "qa@example.com";
+  }
+  if (n === "password" || n.includes("password") || n === "passcode") {
+    return "Pass@123";
+  }
+  if (
+    n === "username" ||
+    n === "user_name" ||
+    n.includes("username") ||
+    n === "login"
+  ) {
+    return "testuser";
+  }
+  if (n === "phone" || n.includes("phone") || n.includes("mobile")) {
+    return "9876543210";
+  }
+  if (n === "first_name") return "John";
+  if (n === "last_name") return "Doe";
+  if (n === "fullname" || n === "full_name" || n === "name") return "John Doe";
+  if (n === "city") return "Mumbai";
+  if (n === "country") return "India";
+  if (n === "state") return "MH";
+  if (n === "zip" || n === "zipcode" || n === "postal_code") return "400001";
+  if (n === "url" || n.endsWith("_url") || n.includes("website")) {
+    return "https://example.com";
+  }
+  if (n === "token" || n.includes("token")) return "sample-token-123";
+  if (n === "api_key" || n === "apikey" || n.includes("api_key")) {
+    return "sample-api-key-123";
+  }
+  if (n === "otp" || n.includes("otp")) return "123456";
+  if (n === "code" || n.endsWith("_code")) return "CODE123";
+  if (n === "status") return "active";
+  if (n === "type") return "default";
+  if (n === "role") return "user";
+  if (n === "slug") return "sample-slug";
+  if (n === "title") return "Sample Title";
+  if (n === "description") return "Sample description";
+  if (n === "address") return "221B Baker Street";
+  if (n === "dob" || n === "birth_date") return "1990-01-01";
+  if (n === "date") return "2026-01-01";
+  if (n === "datetime" || n.endsWith("_at") || n.includes("timestamp")) {
+    return "2026-01-01T00:00:00Z";
+  }
+  if (n === "id" || n.endsWith("_id") || n === "userid" || n === "user_id") {
+    return "123";
+  }
+
+  return undefined;
+}
+
+function coerceStringLength(value, schema = {}) {
+  if (typeof value !== "string") return value;
+
+  let out = value;
+
+  if (typeof schema.minLength === "number" && out.length < schema.minLength) {
+    out = out + "a".repeat(schema.minLength - out.length);
+  }
+
+  if (typeof schema.maxLength === "number" && out.length > schema.maxLength) {
+    out = out.slice(0, schema.maxLength);
+  }
+
+  return out;
+}
+
+function resolveValidPrimitive(schema = {}, fieldName = "") {
   const exampleValue = firstDefined(
     pickExample(schema),
     schema.default,
@@ -50,11 +127,27 @@ function resolveValidPrimitive(schema = {}) {
   );
 
   if (exampleValue !== undefined) {
-    return { value: exampleValue, source: "example/default/enum" };
+    return { value: clone(exampleValue), source: "example/default/enum" };
+  }
+
+  const fieldHint = fieldNameHints(fieldName);
+  if (
+    fieldHint !== undefined &&
+    schema.type !== "integer" &&
+    schema.type !== "number" &&
+    schema.type !== "boolean"
+  ) {
+    return {
+      value: coerceStringLength(fieldHint, schema),
+      source: "field_hint",
+    };
   }
 
   if (schema.format === "uuid") {
-    return { value: "123e4567-e89b-12d3-a456-426614174000", source: "format" };
+    return {
+      value: "123e4567-e89b-12d3-a456-426614174000",
+      source: "format",
+    };
   }
   if (schema.format === "email") {
     return { value: "qa@example.com", source: "format" };
@@ -68,10 +161,16 @@ function resolveValidPrimitive(schema = {}) {
   if (schema.format === "uri" || schema.format === "url") {
     return { value: "https://example.com/resource", source: "format" };
   }
+  if (schema.format === "binary") {
+    return { value: "sample-file.bin", source: "format" };
+  }
 
   const patternValue = inferStringFromPattern(schema.pattern);
   if (patternValue !== undefined) {
-    return { value: patternValue, source: "pattern" };
+    return {
+      value: coerceStringLength(patternValue, schema),
+      source: "pattern",
+    };
   }
 
   switch (schema.type) {
@@ -80,52 +179,105 @@ function resolveValidPrimitive(schema = {}) {
         value: Number.isFinite(schema.minimum) ? schema.minimum : 1,
         source: "type",
       };
+
     case "number":
       return {
         value: Number.isFinite(schema.minimum) ? schema.minimum : 1.5,
         source: "type",
       };
+
     case "boolean":
       return { value: true, source: "type" };
+
     case "array":
       return { value: [], source: "type" };
+
     case "object":
       return { value: {}, source: "type" };
+
     case "string":
-    default:
-      if (schema.minLength && schema.minLength > 0) {
-        return {
-          value: "a".repeat(Math.max(schema.minLength, 1)),
-          source: "type",
-        };
+    default: {
+      let str = "sample";
+
+      if (fieldHint !== undefined) {
+        str = fieldHint;
+      } else if (typeof schema.minLength === "number" && schema.minLength > 0) {
+        str = "a".repeat(Math.max(schema.minLength, 1));
       }
-      return { value: "sample", source: "type" };
+
+      return {
+        value: coerceStringLength(str, schema),
+        source: "type",
+      };
+    }
   }
 }
 
-function resolveValidValue(schema = {}) {
+function mergeObjectSchemas(parts = []) {
+  const merged = {
+    type: "object",
+    properties: {},
+    required: [],
+  };
+
+  for (const part of parts) {
+    if (!isObject(part)) continue;
+
+    if (isObject(part.properties)) {
+      merged.properties = {
+        ...merged.properties,
+        ...part.properties,
+      };
+    }
+
+    if (Array.isArray(part.required)) {
+      merged.required.push(...part.required);
+    }
+  }
+
+  merged.required = Array.from(new Set(merged.required));
+  return merged;
+}
+
+function resolveValidValue(schema = {}, fieldName = "") {
   if (!schema || typeof schema !== "object") {
     return { value: "sample", source: "fallback" };
   }
 
-  if (schema.oneOf?.length) return resolveValidValue(schema.oneOf[0]);
-  if (schema.anyOf?.length) return resolveValidValue(schema.anyOf[0]);
-  if (schema.allOf?.length)
-    return resolveObjectSchema({ type: "object", allOf: schema.allOf });
+  const directExample = pickExample(schema);
+  if (directExample !== undefined) {
+    return { value: clone(directExample), source: "schema_example" };
+  }
+
+  if (schema.oneOf?.length) {
+    return resolveValidValue(schema.oneOf[0], fieldName);
+  }
+
+  if (schema.anyOf?.length) {
+    return resolveValidValue(schema.anyOf[0], fieldName);
+  }
+
+  if (schema.allOf?.length) {
+    const merged = mergeObjectSchemas(schema.allOf);
+    return resolveObjectSchema(merged);
+  }
 
   if (schema.type === "object" || schema.properties) {
     return resolveObjectSchema(schema);
   }
 
   if (schema.type === "array") {
-    const itemResolved = resolveValidValue(schema.items || { type: "string" });
+    const itemResolved = resolveValidValue(
+      schema.items || { type: "string" },
+      fieldName ? `${fieldName}_item` : "item",
+    );
     return {
       value: [itemResolved.value],
       source: `array:${itemResolved.source}`,
     };
   }
 
-  return resolveValidPrimitive(schema);
+  return resolveValidPrimitive(schema, fieldName);
 }
 
 function resolveObjectSchema(schema = {}) {
@@ -135,10 +287,22 @@ function resolveObjectSchema(schema = {}) {
     : new Set();
   const props = isObject(schema.properties) ? schema.properties : {};
 
-  for (const [name, propSchema] of Object.entries(props)) {
-    if (required.size > 0 && !required.has(name)) continue;
-    const resolved = resolveValidValue(propSchema || {});
+  const entries = Object.entries(props);
+
+  for (const [name, propSchema] of entries) {
+    const shouldInclude =
+      required.size === 0 ? Object.keys(out).length < 3 : required.has(name);
+
+    if (!shouldInclude) continue;
+
+    const resolved = resolveValidValue(propSchema || {}, name);
     out[name] = resolved.value;
+  }
+
+  if (Object.keys(out).length === 0 && entries.length > 0) {
+    const [firstName, firstSchema] = entries[0];
+    const resolved = resolveValidValue(firstSchema || {}, firstName);
+    out[firstName] = resolved.value;
   }
 
   if (Object.keys(out).length === 0) {
@@ -166,7 +330,9 @@ function buildInvalidTypeValue(schema = {}, validValue) {
   }
 }
 
-function buildInvalidFormatValue(schema = {}) {
+function buildInvalidFormatValue(schema = {}, fieldName = "") {
+  const n = String(fieldName || "").toLowerCase();
+
   switch (schema.format) {
     case "uuid":
       return "not-a-uuid";
@@ -181,6 +347,8 @@ function buildInvalidFormatValue(schema = {}) {
       return "not-a-url";
     default:
       if (schema.pattern) return "INVALID_PATTERN_VALUE";
+      if (n.includes("email")) return "invalid-email";
+      if (n.includes("phone") || n.includes("mobile")) return "12abc";
       return undefined;
   }
 }
@@ -218,6 +386,18 @@ function buildBoundaryCases(schema = {}) {
 
   return out;
 }
+
+function buildInvalidEnumValue(schema = {}) {
+  const enumVals = Array.isArray(schema.enum) ? schema.enum : [];
+  if (enumVals.length === 0) return undefined;
+
+  const first = enumVals[0];
+
+  if (typeof first === "number") return 999999;
+  if (typeof first === "boolean") return "not-boolean-enum";
+  return "__INVALID_ENUM__";
+}
+
 function toRequestShape(valid) {
   return {
     path_params: clone(valid.path),
@@ -225,6 +405,36 @@ function toRequestShape(valid) {
     headers: clone(valid.headers),
     request_body: clone(valid.body),
   };
+}
+
+function buildBodyRequiredFieldNegatives(validBody) {
+  const out = [];
+
+  if (!isObject(validBody)) return out;
+
+  for (const fieldName of Object.keys(validBody)) {
+    const missingBody = clone(validBody);
+    delete missingBody[fieldName];
+
+    out.push({
+      kind: "body_missing_required_field",
+      field: fieldName,
+      badValue: undefined,
+      requestBody: missingBody,
+    });
+
+    out.push({
+      kind: "body_null_required_field",
+      field: fieldName,
+      badValue: null,
+      requestBody: {
+        ...clone(validBody),
+        [fieldName]: null,
+      },
+    });
+  }
+
+  return out;
 }
 
 export function resolveEndpointTestData(endpoint) {
@@ -242,6 +452,7 @@ export function resolveEndpointTestData(endpoint) {
       invalidFormat: [],
       stringTooLong: [],
       numericAboveMaximum: [],
+      nullRequiredField: [],
       boundary: [],
     },
     sourceMap: {},
@@ -266,7 +477,7 @@ export function resolveEndpointTestData(endpoint) {
       if (directExample !== undefined) {
         resolved = { value: clone(directExample), source: "param_example" };
       } else {
-        resolved = resolveValidValue(schema);
+        resolved = resolveValidValue(schema, field?.name);
       }
 
       result.valid[group.key][field.name] = resolved.value;
@@ -283,7 +494,10 @@ export function resolveEndpointTestData(endpoint) {
     result.valid.body = clone(preferredBody.example);
     result.sourceMap.body = "request_body_example";
   } else if (preferredBody?.schema) {
-    const resolvedBody = resolveValidValue(preferredBody.schema);
+    const resolvedBody = resolveValidValue(
+      preferredBody.schema,
+      "request_body",
+    );
     result.valid.body = resolvedBody.value;
     result.sourceMap.body = `request_body_${resolvedBody.source}`;
   }
@@ -316,8 +530,8 @@ export function resolveEndpointTestData(endpoint) {
         });
       }
 
-      if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-        const badEnum = "__INVALID_ENUM__";
+      const badEnum = buildInvalidEnumValue(schema);
+      if (badEnum !== undefined) {
         const req = clone(result.valid);
         req[group.key][fieldName] = badEnum;
         result.negative.invalidEnum.push({
@@ -328,7 +542,7 @@ export function resolveEndpointTestData(endpoint) {
         });
       }
 
-      const badFormat = buildInvalidFormatValue(schema);
+      const badFormat = buildInvalidFormatValue(schema, fieldName);
       if (badFormat !== undefined) {
         const req = clone(result.valid);
         req[group.key][fieldName] = badFormat;
@@ -373,6 +587,35 @@ export function resolveEndpointTestData(endpoint) {
       location: "body",
       request: toRequestShape(req),
     });
+  }
+
+  for (const bodyNeg of buildBodyRequiredFieldNegatives(result.valid.body)) {
+    if (bodyNeg.kind === "body_missing_required_field") {
+      result.negative.missingRequired.push({
+        field: bodyNeg.field,
+        location: "body",
+        request: {
+          path_params: clone(result.valid.path),
+          query_params: clone(result.valid.query),
+          headers: clone(result.valid.headers),
+          request_body: clone(bodyNeg.requestBody),
+        },
+      });
+    }
+
+    if (bodyNeg.kind === "body_null_required_field") {
+      result.negative.nullRequiredField.push({
+        field: bodyNeg.field,
+        location: "body",
+        badValue: null,
+        request: {
+          path_params: clone(result.valid.path),
+          query_params: clone(result.valid.query),
+          headers: clone(result.valid.headers),
+          request_body: clone(bodyNeg.requestBody),
+        },
+      });
+    }
   }
 
   return result;
