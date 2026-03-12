@@ -171,6 +171,89 @@ function hasRequestBody(endpoint) {
   return !!buildRequestBody(endpoint);
 }
 
+function describeSchemaType(schema = {}) {
+  if (schema?.type) return schema.type;
+  if (schema?.properties) return "object";
+  if (schema?.items) return "array";
+  return "value";
+}
+
+function buildResponseAssertions(endpoint, maxFields = 5) {
+  const schema = getResponseSchema(endpoint);
+  const props =
+    schema?.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+
+  const entries = Object.entries(props).slice(0, maxFields);
+  const assertions = [];
+
+  for (const [fieldName, fieldSchema] of entries) {
+    const fieldType = describeSchemaType(fieldSchema);
+
+    if (fieldType === "object") {
+      assertions.push(
+        `Response field '${fieldName}' is returned as an object.`,
+      );
+    } else if (fieldType === "array") {
+      assertions.push(`Response field '${fieldName}' is returned as an array.`);
+    } else {
+      assertions.push(
+        `Response field '${fieldName}' matches type '${fieldType}'.`,
+      );
+    }
+
+    if (fieldSchema?.format === "email") {
+      assertions.push(`Response field '${fieldName}' follows email format.`);
+    }
+
+    if (Array.isArray(fieldSchema?.enum) && fieldSchema.enum.length > 0) {
+      assertions.push(
+        `Response field '${fieldName}' uses one of the documented enum values: ${fieldSchema.enum.join(", ")}.`,
+      );
+    }
+  }
+
+  return assertions;
+}
+
+function buildRequestAssertions(endpoint, maxFields = 5) {
+  const schema = getRequestSchema(endpoint);
+  const props =
+    schema?.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+
+  const entries = Object.entries(props).slice(0, maxFields);
+  const assertions = [];
+
+  for (const [fieldName, fieldSchema] of entries) {
+    const fieldType = describeSchemaType(fieldSchema);
+
+    if (fieldType === "object") {
+      assertions.push(`Request field '${fieldName}' is sent as an object.`);
+    } else if (fieldType === "array") {
+      assertions.push(`Request field '${fieldName}' is sent as an array.`);
+    } else {
+      assertions.push(
+        `Request field '${fieldName}' matches type '${fieldType}'.`,
+      );
+    }
+
+    if (fieldSchema?.format === "email") {
+      assertions.push(`Request field '${fieldName}' follows email format.`);
+    }
+
+    if (Array.isArray(fieldSchema?.enum) && fieldSchema.enum.length > 0) {
+      assertions.push(
+        `Request field '${fieldName}' uses one of the documented enum values: ${fieldSchema.enum.join(", ")}.`,
+      );
+    }
+  }
+
+  return assertions;
+}
+
 function baseCase(endpoint, { title, objective, priority = "P1" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
@@ -240,16 +323,16 @@ export function makeSchemaResponseTemplate(endpoint) {
   tc.expected_results = [
     `The API responds with HTTP ${successStatus}.`,
     "The response structure matches the documented response schema.",
-    "All mandatory fields defined in the schema are present.",
-    "Field values follow the documented data types and structure.",
-    ...(requiredFields.length > 0
-      ? [`Required schema fields are present: ${requiredFields.join(", ")}.`]
-      : []),
-    ...(allProps.length > 0
+    ...requiredFields
+      .slice(0, 5)
+      .map((field) => `Required response field '${field}' is present.`),
+    ...buildResponseAssertions(endpoint, 5),
+    ...(requiredFields.length === 0 && allProps.length > 0
       ? [
           `The documented response properties are structured as expected: ${allProps.join(", ")}.`,
         ]
       : []),
+    "Field values follow the documented data types and structure.",
   ];
 
   tc.validation_focus = [
@@ -257,6 +340,7 @@ export function makeSchemaResponseTemplate(endpoint) {
     "Mandatory fields",
     "Field data types",
     "Object and array structure",
+    ...allProps.slice(0, 3).map((field) => `Field:${field}`),
   ];
 
   return tc;
@@ -283,15 +367,20 @@ export function makeSchemaRequiredFieldsTemplate(endpoint) {
   tc.expected_results = [
     `The API responds with HTTP ${successStatus}.`,
     "All required schema fields are present in the response.",
-    ...(requiredFields.length > 0
-      ? [
-          `Required fields expected in the response include: ${requiredFields.join(", ")}.`,
-        ]
-      : ["Required fields are present according to the documented schema."]),
+    ...requiredFields
+      .slice(0, 8)
+      .map((field) => `Required field '${field}' is present in the response.`),
+    ...(requiredFields.length === 0
+      ? ["Required fields are present according to the documented schema."]
+      : []),
     "No mandatory field is missing from the response body.",
   ];
 
-  tc.validation_focus = ["Required schema fields", "Response completeness"];
+  tc.validation_focus = [
+    "Required schema fields",
+    "Response completeness",
+    ...requiredFields.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -317,7 +406,8 @@ export function makeSchemaFieldTypesTemplate(endpoint) {
   tc.expected_results = [
     `The API responds with HTTP ${successStatus}.`,
     "Response fields match the documented primitive and structured data types.",
-    ...(props.length > 0
+    ...buildResponseAssertions(endpoint, 5),
+    ...(props.length > 0 && buildResponseAssertions(endpoint, 5).length === 0
       ? [
           `The tester should validate field types for documented properties such as: ${props.join(", ")}.`,
         ]
@@ -325,7 +415,11 @@ export function makeSchemaFieldTypesTemplate(endpoint) {
     "No field is returned with an unexpected type.",
   ];
 
-  tc.validation_focus = ["Field data types", "Response type consistency"];
+  tc.validation_focus = [
+    "Field data types",
+    "Response type consistency",
+    ...props.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -349,13 +443,25 @@ export function makeSchemaEnumTemplate(endpoint) {
 
   tc.expected_results = [
     "All enum-based response fields contain only documented values.",
-    ...(enumFields.length > 0
+    ...buildResponseAssertions(endpoint, 5).filter(
+      (x) =>
+        x.includes("documented enum values") || x.includes("allowed values"),
+    ),
+    ...(enumFields.length > 0 &&
+    buildResponseAssertions(endpoint, 5).filter(
+      (x) =>
+        x.includes("documented enum values") || x.includes("allowed values"),
+    ).length === 0
       ? [`Enum-constrained fields include: ${enumFields.join(", ")}.`]
-      : ["Enum-constrained fields follow the documented allowed values."]),
+      : []),
     "No undocumented enum value is returned by the API.",
   ];
 
-  tc.validation_focus = ["Enum validation", "Allowed value enforcement"];
+  tc.validation_focus = [
+    "Enum validation",
+    "Allowed value enforcement",
+    ...enumFields.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -379,15 +485,22 @@ export function makeSchemaNestedObjectsTemplate(endpoint) {
 
   tc.expected_results = [
     "Nested objects follow the documented structure.",
-    ...(nestedFields.length > 0
+    ...buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("as an object."),
+    ),
+    ...(nestedFields.length > 0 &&
+    buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("as an object."),
+    ).length === 0
       ? [`Nested object fields include: ${nestedFields.join(", ")}.`]
-      : ["Nested objects are returned in the documented structure."]),
+      : []),
     "No nested object contains an unexpected schema structure.",
   ];
 
   tc.validation_focus = [
     "Nested object structure",
     "Response schema depth validation",
+    ...nestedFields.slice(0, 3).map((field) => `Field:${field}`),
   ];
 
   return tc;
@@ -412,13 +525,23 @@ export function makeSchemaArrayTemplate(endpoint) {
 
   tc.expected_results = [
     "Array fields are returned in the documented structure.",
+    ...buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("as an array."),
+    ),
     "Array elements follow the documented item schema.",
-    ...(arrayFields.length > 0
+    ...(arrayFields.length > 0 &&
+    buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("as an array."),
+    ).length === 0
       ? [`Array-based fields include: ${arrayFields.join(", ")}.`]
       : []),
   ];
 
-  tc.validation_focus = ["Array structure", "Array item schema validation"];
+  tc.validation_focus = [
+    "Array structure",
+    "Array item schema validation",
+    ...arrayFields.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -442,7 +565,13 @@ export function makeSchemaFormatTemplate(endpoint) {
 
   tc.expected_results = [
     "Formatted string fields follow the documented format constraints.",
-    ...(formatFields.length > 0
+    ...buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("follows email format."),
+    ),
+    ...(formatFields.length > 0 &&
+    buildResponseAssertions(endpoint, 5).filter((x) =>
+      x.includes("follows email format."),
+    ).length === 0
       ? [`Fields with documented formats include: ${formatFields.join(", ")}.`]
       : ["Formatted fields match the documented schema format."]),
     "No field violates the documented formatting rules.",
@@ -451,6 +580,7 @@ export function makeSchemaFormatTemplate(endpoint) {
   tc.validation_focus = [
     "String format validation",
     "Format-specific field compliance",
+    ...formatFields.slice(0, 3).map((field) => `Field:${field}`),
   ];
 
   return tc;
@@ -481,7 +611,11 @@ export function makeSchemaNumericConstraintsTemplate(endpoint) {
     "No numeric field violates the documented range rules.",
   ];
 
-  tc.validation_focus = ["Numeric constraint validation", "Range compliance"];
+  tc.validation_focus = [
+    "Numeric constraint validation",
+    "Range compliance",
+    ...fields.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -514,6 +648,7 @@ export function makeSchemaStringConstraintsTemplate(endpoint) {
   tc.validation_focus = [
     "String length validation",
     "Length constraint compliance",
+    ...fields.slice(0, 3).map((field) => `Field:${field}`),
   ];
 
   return tc;
@@ -544,7 +679,11 @@ export function makeSchemaPatternTemplate(endpoint) {
     "No field violates the documented pattern constraints.",
   ];
 
-  tc.validation_focus = ["Pattern validation", "Regex constraint compliance"];
+  tc.validation_focus = [
+    "Pattern validation",
+    "Regex constraint compliance",
+    ...fields.slice(0, 3).map((field) => `Field:${field}`),
+  ];
 
   return tc;
 }
@@ -610,11 +749,11 @@ export function makeSchemaRequestBodyTemplate(endpoint) {
 
   tc.expected_results = [
     "The request body structure matches the documented request schema.",
-    "Mandatory request fields are included.",
-    ...(requiredFields.length > 0
-      ? [`Required request fields include: ${requiredFields.join(", ")}.`]
-      : []),
-    ...(props.length > 0
+    ...requiredFields
+      .slice(0, 5)
+      .map((field) => `Required request field '${field}' is included.`),
+    ...buildRequestAssertions(endpoint, 5),
+    ...(requiredFields.length === 0 && props.length > 0
       ? [`Documented request fields include: ${props.join(", ")}.`]
       : []),
     "The request is accepted by the API when valid schema-compliant data is provided.",
@@ -626,6 +765,7 @@ export function makeSchemaRequestBodyTemplate(endpoint) {
     "Mandatory request fields",
     "Request field types",
     "Acceptance of valid payload",
+    ...props.slice(0, 3).map((field) => `Field:${field}`),
   ];
 
   return tc;

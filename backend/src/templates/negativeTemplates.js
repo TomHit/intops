@@ -4,58 +4,43 @@ function buildModuleName(endpoint) {
   return `${endpoint?.method || "API"} ${endpoint?.path || ""}`.trim();
 }
 
+function getResolvedValidRequest(endpoint) {
+  const resolved = endpoint?._resolvedTestData || {};
+
+  return {
+    path_params: resolved?.valid?.path || {},
+    query_params: resolved?.valid?.query || {},
+    headers: resolved?.valid?.headers || {},
+    cookies: resolved?.valid?.cookies || {},
+    request_body:
+      resolved?.valid?.body !== undefined ? resolved.valid.body : null,
+  };
+}
+
 function buildPathParams(endpoint) {
-  const out = {};
-  const pathParams = Array.isArray(endpoint?.params?.path)
-    ? endpoint.params.path
-    : [];
-  for (const p of pathParams) {
-    out[p.name] = `<valid_${p.name}>`;
-  }
-  return out;
+  const resolved = getResolvedValidRequest(endpoint);
+  return resolved.path_params || {};
 }
 
 function buildQueryParams(endpoint) {
-  const out = {};
-  const query = Array.isArray(endpoint?.params?.query)
-    ? endpoint.params.query
-    : [];
-  for (const p of query) {
-    out[p.name] = p.required ? `<required_${p.name}>` : `<optional_${p.name}>`;
-  }
-  return out;
+  const resolved = getResolvedValidRequest(endpoint);
+  return resolved.query_params || {};
 }
 
 function buildHeaders(endpoint) {
-  const headers = {};
-  if (Array.isArray(endpoint?.security) && endpoint.security.length > 0) {
-    headers.Authorization = "Bearer <valid_token>";
-  }
-  return headers;
+  const resolved = getResolvedValidRequest(endpoint);
+  return resolved.headers || {};
 }
 
 function buildRequestBody(endpoint) {
-  const schema =
-    endpoint?.requestBody?.content?.["application/json"]?.schema ||
-    endpoint?.requestBody?.content?.["application/*+json"]?.schema ||
-    null;
-
-  if (!schema) return null;
-
-  const props = schema?.properties || {};
-  const body = {};
-
-  for (const key of Object.keys(props)) {
-    body[key] = `<valid_${key}>`;
-  }
-
-  return Object.keys(body).length > 0 ? body : {};
+  const resolved = getResolvedValidRequest(endpoint);
+  return resolved.request_body !== undefined ? resolved.request_body : null;
 }
 
 function hasRequestBody(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   if (method === "GET" || method === "DELETE") return false;
-  return !!buildRequestBody(endpoint);
+  return buildRequestBody(endpoint) !== null;
 }
 
 function getRequiredQueryParam(endpoint) {
@@ -73,6 +58,7 @@ function getRequiredPathParam(endpoint) {
     ) || null
   );
 }
+
 function getRequestSchema(endpoint) {
   return (
     endpoint?.requestBody?.content?.["application/json"]?.schema ||
@@ -173,7 +159,7 @@ function getFirstPatternField(endpoint) {
   return null;
 }
 
-function baseNegativeCase(endpoint, { title, objective, priority = "P1" }) {
+function baseNegativeCase(endpoint, { title, objective, priority = "high" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const moduleName = buildModuleName(endpoint);
@@ -194,6 +180,7 @@ function baseNegativeCase(endpoint, { title, objective, priority = "P1" }) {
       path_params: buildPathParams(endpoint),
       query_params: buildQueryParams(endpoint),
       headers: buildHeaders(endpoint),
+      cookies: getResolvedValidRequest(endpoint).cookies || {},
       request_body: hasRequestBody(endpoint)
         ? buildRequestBody(endpoint)
         : null,
@@ -219,24 +206,23 @@ export function makeNegativeMissingRequiredQueryTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const requiredQuery = getRequiredQueryParam(endpoint);
-  const missingParamName = requiredQuery?.name || "<required_query_param>";
+  const missingParamName = requiredQuery?.name || "required_query_param";
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects request when required query parameter is missing`,
     objective:
       "Verify that the API rejects the request when a required query parameter is not provided.",
-    priority: "P1",
+    priority: "high",
   });
 
-  const validQuery = buildQueryParams(endpoint);
+  const validQuery = { ...(buildQueryParams(endpoint) || {}) };
   delete validQuery[missingParamName];
 
   tc.test_data.query_params = validQuery;
-  tc.test_data.headers = buildHeaders(endpoint);
   tc.test_data.request_body = null;
 
   tc.steps.push(
-    `Add all normally required query parameters except ${missingParamName}.`,
+    `Add all normally required query parameters except '${missingParamName}'.`,
     "Add required headers if applicable.",
     "Send the request.",
   );
@@ -244,13 +230,18 @@ export function makeNegativeMissingRequiredQueryTemplate(endpoint) {
   tc.expected_results = [
     "The API rejects the request.",
     "A client-side error response is returned, such as HTTP 400 or HTTP 422.",
-    "The error response indicates that a required query parameter is missing or invalid.",
+    `The error response indicates that required query parameter '${missingParamName}' is missing or invalid.`,
   ];
 
   tc.validation_focus = [
     "Required query parameter validation",
     "Client error handling",
     "Negative request validation",
+  ];
+
+  tc.references = [
+    "template_key:negative.missing_required_query",
+    `field:${missingParamName}`,
   ];
 
   tc.review_notes = `Confirm the exact required query parameter and expected error response format for ${path}.`;
@@ -262,17 +253,17 @@ export function makeNegativeMissingRequiredPathTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const requiredPath = getRequiredPathParam(endpoint);
-  const missingParamName = requiredPath?.name || "<required_path_param>";
+  const missingParamName = requiredPath?.name || "required_path_param";
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects request when required path parameter is missing`,
     objective:
       "Verify that the API rejects or fails safely when a required path parameter is omitted or malformed.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.steps.push(
-    `Prepare the endpoint request without a valid value for path parameter ${missingParamName}.`,
+    `Prepare the endpoint request without a valid value for path parameter '${missingParamName}'.`,
     "Add any other required query parameters and headers.",
     "Send the request.",
   );
@@ -280,7 +271,7 @@ export function makeNegativeMissingRequiredPathTemplate(endpoint) {
   tc.expected_results = [
     "The API does not process the request as a valid resource request.",
     "A client-side error response is returned, such as HTTP 400 or HTTP 404.",
-    "The error response indicates that the path parameter or resource identifier is invalid or missing.",
+    `The error response indicates that path parameter '${missingParamName}' or resource identifier is invalid or missing.`,
   ];
 
   tc.validation_focus = [
@@ -289,7 +280,12 @@ export function makeNegativeMissingRequiredPathTemplate(endpoint) {
     "Negative request validation",
   ];
 
-  tc.review_notes = `Confirm how ${path} behaves when path parameter ${missingParamName} is omitted or malformed.`;
+  tc.references = [
+    "template_key:negative.missing_required_path",
+    `field:${missingParamName}`,
+  ];
+
+  tc.review_notes = `Confirm how ${path} behaves when path parameter '${missingParamName}' is omitted or malformed.`;
 
   return tc;
 }
@@ -311,7 +307,7 @@ export function makeNegativeUnsupportedMethodTemplate(endpoint) {
     title: `Verify ${path} rejects unsupported HTTP methods`,
     objective:
       "Verify that the API rejects requests made with an unsupported HTTP method.",
-    priority: "P2",
+    priority: "medium",
   });
 
   tc.steps[1] = `Select an unsupported method such as ${invalidMethod}.`;
@@ -332,6 +328,11 @@ export function makeNegativeUnsupportedMethodTemplate(endpoint) {
     "Negative protocol validation",
   ];
 
+  tc.references = [
+    "template_key:negative.unsupported_method",
+    `unsupported_method:${invalidMethod}`,
+  ];
+
   tc.review_notes = `Confirm the expected unsupported-method response code for ${path}.`;
 
   return tc;
@@ -345,11 +346,11 @@ export function makeNegativeInvalidContentTypeTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects unsupported Content-Type header`,
     objective:
       "Verify that the API rejects requests sent with an invalid or unsupported Content-Type header.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.headers = {
-    ...buildHeaders(endpoint),
+    ...(tc.test_data.headers || {}),
     "Content-Type": "text/plain",
   };
   tc.test_data.request_body = hasRequestBody(endpoint)
@@ -374,6 +375,8 @@ export function makeNegativeInvalidContentTypeTemplate(endpoint) {
     "Negative request validation",
   ];
 
+  tc.references = ["template_key:negative.invalid_content_type"];
+
   tc.review_notes = `Confirm the exact invalid Content-Type response code for ${path}.`;
 
   return tc;
@@ -387,11 +390,11 @@ export function makeNegativeMalformedJsonTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects malformed JSON request body`,
     objective:
       "Verify that the API rejects syntactically invalid JSON request payloads.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.headers = {
-    ...buildHeaders(endpoint),
+    ...(tc.test_data.headers || {}),
     "Content-Type": "application/json",
   };
   tc.test_data.request_body = "{ invalid_json: true ";
@@ -414,6 +417,8 @@ export function makeNegativeMalformedJsonTemplate(endpoint) {
     "Negative request validation",
   ];
 
+  tc.references = ["template_key:negative.malformed_json"];
+
   tc.review_notes = `Confirm the exact malformed JSON error response for ${path}.`;
 
   return tc;
@@ -427,11 +432,11 @@ export function makeNegativeEmptyBodyTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects empty request body when body is required`,
     objective:
       "Verify that the API rejects an empty request body when the endpoint expects a required payload.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.headers = {
-    ...buildHeaders(endpoint),
+    ...(tc.test_data.headers || {}),
     "Content-Type": "application/json",
   };
   tc.test_data.request_body = {};
@@ -454,6 +459,8 @@ export function makeNegativeEmptyBodyTemplate(endpoint) {
     "Negative request validation",
   ];
 
+  tc.references = ["template_key:negative.empty_body"];
+
   tc.review_notes = `Confirm whether ${path} treats empty JSON and missing body differently.`;
 
   return tc;
@@ -463,16 +470,16 @@ export function makeNegativeResourceNotFoundTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
 
-  const fakePathParams = buildPathParams(endpoint);
+  const fakePathParams = { ...(buildPathParams(endpoint) || {}) };
   for (const key of Object.keys(fakePathParams)) {
-    fakePathParams[key] = `<non_existent_${key}>`;
+    fakePathParams[key] = "999999999";
   }
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} returns correct error for non-existent resource`,
     objective:
       "Verify that the API returns the correct error response when a non-existent resource identifier is used.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.path_params = fakePathParams;
@@ -495,6 +502,8 @@ export function makeNegativeResourceNotFoundTemplate(endpoint) {
     "Negative resource lookup validation",
   ];
 
+  tc.references = ["template_key:negative.resource_not_found"];
+
   tc.review_notes = `Confirm the expected not-found response code and body for ${path}.`;
 
   return tc;
@@ -504,23 +513,23 @@ export function makeNegativeInvalidQueryTypeTemplate(endpoint) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const qp = getFirstQueryParamWithType(endpoint);
-  const fieldName = qp?.name || "<typed_query_param>";
+  const fieldName = qp?.name || "typed_query_param";
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects invalid query parameter type`,
     objective:
       "Verify that the API rejects query parameters whose values do not match the documented type.",
-    priority: "P2",
+    priority: "medium",
   });
 
   tc.test_data.query_params = {
-    ...buildQueryParams(endpoint),
-    [fieldName]: "<invalid_type_value>",
+    ...(buildQueryParams(endpoint) || {}),
+    [fieldName]: "invalid-type-value",
   };
   tc.test_data.request_body = null;
 
   tc.steps.push(
-    `Set query parameter ${fieldName} to a value that does not match its documented type.`,
+    `Set query parameter '${fieldName}' to a value that does not match its documented type.`,
     "Send the request.",
   );
 
@@ -536,6 +545,11 @@ export function makeNegativeInvalidQueryTypeTemplate(endpoint) {
     "Negative input handling",
   ];
 
+  tc.references = [
+    "template_key:negative.invalid_query_type",
+    `field:${fieldName}`,
+  ];
+
   tc.review_notes = `Confirm the typed query parameter name and exact validation response for ${path}.`;
 
   return tc;
@@ -545,7 +559,7 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
   const method = String(endpoint?.method || "POST").toUpperCase();
   const path = endpoint?.path || "/";
   const enumField = getFirstEnumField(endpoint);
-  const fieldName = enumField?.name || "<enum_field>";
+  const fieldName = enumField?.name || "enum_field";
   const allowed = Array.isArray(enumField?.schema?.enum)
     ? enumField.schema.enum
     : [];
@@ -554,7 +568,7 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects values outside the allowed enum set`,
     objective:
       "Verify that the API rejects request values that are not part of the documented enum.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -564,8 +578,8 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
 
   tc.steps.push(
     allowed.length > 0
-      ? `Set ${fieldName} to a value outside the documented enum: [${allowed.join(", ")}].`
-      : `Set ${fieldName} to a value outside the documented enum set.`,
+      ? `Set '${fieldName}' to a value outside the documented enum: [${allowed.join(", ")}].`
+      : `Set '${fieldName}' to a value outside the documented enum set.`,
     "Send the request.",
   );
 
@@ -581,6 +595,8 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
     "Negative input handling",
   ];
 
+  tc.references = ["template_key:negative.invalid_enum", `field:${fieldName}`];
+
   tc.review_notes = `Confirm the enum field name and exact validation error payload for ${path}.`;
 
   return tc;
@@ -590,14 +606,14 @@ export function makeNegativeInvalidFormatTemplate(endpoint) {
   const method = String(endpoint?.method || "POST").toUpperCase();
   const path = endpoint?.path || "/";
   const fmtField = getFirstFormatField(endpoint);
-  const fieldName = fmtField?.name || "<format_field>";
+  const fieldName = fmtField?.name || "format_field";
   const formatName = fmtField?.schema?.format || "documented format";
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects invalid formatted string values`,
     objective:
       "Verify that the API rejects values that do not follow documented string format rules.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -615,7 +631,7 @@ export function makeNegativeInvalidFormatTemplate(endpoint) {
   };
 
   tc.steps.push(
-    `Set ${fieldName} to a value that does not match the documented ${formatName} format.`,
+    `Set '${fieldName}' to a value that does not match the documented ${formatName} format.`,
     "Send the request.",
   );
 
@@ -631,6 +647,11 @@ export function makeNegativeInvalidFormatTemplate(endpoint) {
     "Negative request validation",
   ];
 
+  tc.references = [
+    "template_key:negative.invalid_format",
+    `field:${fieldName}`,
+  ];
+
   tc.review_notes = `Confirm the formatted field name and exact invalid-format response for ${path}.`;
 
   return tc;
@@ -640,14 +661,14 @@ export function makeNegativeStringTooLongTemplate(endpoint) {
   const method = String(endpoint?.method || "POST").toUpperCase();
   const path = endpoint?.path || "/";
   const field = getFirstStringConstraintField(endpoint);
-  const fieldName = field?.name || "<string_field>";
+  const fieldName = field?.name || "string_field";
   const maxLen = field?.schema?.maxLength;
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects string values exceeding maximum length`,
     objective:
       "Verify that the API rejects string values that exceed documented maximum length constraints.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -658,15 +679,15 @@ export function makeNegativeStringTooLongTemplate(endpoint) {
 
   tc.steps.push(
     typeof maxLen === "number"
-      ? `Set ${fieldName} to a string longer than the maximum allowed length (${maxLen} characters).`
-      : `Set ${fieldName} to a string longer than the documented maximum length.`,
+      ? `Set '${fieldName}' to a string longer than the maximum allowed length (${maxLen} characters).`
+      : `Set '${fieldName}' to a string longer than the documented maximum length.`,
     "Send the request.",
   );
 
   tc.expected_results = [
     "The API rejects the request.",
     typeof maxLen === "number"
-      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because ${fieldName} exceeds the maximum length of ${maxLen}.`
+      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because '${fieldName}' exceeds the maximum length of ${maxLen}.`
       : "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
     "The response indicates that the supplied string value is too long.",
   ];
@@ -675,6 +696,11 @@ export function makeNegativeStringTooLongTemplate(endpoint) {
     "String length validation",
     "Maximum length enforcement",
     "Negative input handling",
+  ];
+
+  tc.references = [
+    "template_key:negative.string_too_long",
+    `field:${fieldName}`,
   ];
 
   tc.review_notes = `Confirm the constrained string field and max-length response behavior for ${path}.`;
@@ -686,14 +712,14 @@ export function makeNegativeNumericAboveMaximumTemplate(endpoint) {
   const method = String(endpoint?.method || "POST").toUpperCase();
   const path = endpoint?.path || "/";
   const field = getFirstNumericConstraintField(endpoint);
-  const fieldName = field?.name || "<numeric_field>";
+  const fieldName = field?.name || "numeric_field";
   const maxVal = field?.schema?.maximum;
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects numeric values above the documented maximum`,
     objective:
       "Verify that the API rejects numeric values that exceed documented maximum constraints.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -703,15 +729,15 @@ export function makeNegativeNumericAboveMaximumTemplate(endpoint) {
 
   tc.steps.push(
     typeof maxVal === "number"
-      ? `Set ${fieldName} to a numeric value above the documented maximum (${maxVal}).`
-      : `Set ${fieldName} to a numeric value above the documented maximum.`,
+      ? `Set '${fieldName}' to a numeric value above the documented maximum (${maxVal}).`
+      : `Set '${fieldName}' to a numeric value above the documented maximum.`,
     "Send the request.",
   );
 
   tc.expected_results = [
     "The API rejects the request.",
     typeof maxVal === "number"
-      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because ${fieldName} exceeds the maximum value of ${maxVal}.`
+      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because '${fieldName}' exceeds the maximum value of ${maxVal}.`
       : "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
     "The response indicates that the supplied numeric value is out of range.",
   ];
@@ -720,6 +746,11 @@ export function makeNegativeNumericAboveMaximumTemplate(endpoint) {
     "Numeric constraint validation",
     "Maximum value enforcement",
     "Negative input handling",
+  ];
+
+  tc.references = [
+    "template_key:negative.numeric_above_maximum",
+    `field:${fieldName}`,
   ];
 
   tc.review_notes = `Confirm the constrained numeric field and out-of-range response for ${path}.`;
@@ -735,7 +766,7 @@ export function makeNegativeAdditionalPropertyTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects unexpected additional request fields`,
     objective:
       "Verify that the API rejects request bodies containing undocumented additional properties when strict schema enforcement is expected.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -760,6 +791,8 @@ export function makeNegativeAdditionalPropertyTemplate(endpoint) {
     "Negative request validation",
   ];
 
+  tc.references = ["template_key:negative.additional_property"];
+
   tc.review_notes = `Confirm whether ${path} enforces additionalProperties=false and how unknown fields are handled.`;
 
   return tc;
@@ -773,7 +806,7 @@ export function makeNegativeConflictTemplate(endpoint) {
     title: `Verify ${method} ${path} returns the correct conflict response`,
     objective:
       "Verify that the API returns the correct conflict response when the request violates a conflict or duplicate-state rule.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.steps.push(
@@ -793,6 +826,8 @@ export function makeNegativeConflictTemplate(endpoint) {
     "Business rule enforcement",
   ];
 
+  tc.references = ["template_key:negative.conflict"];
+
   tc.review_notes = `Confirm the exact conflict trigger and response code for ${path}.`;
 
   return tc;
@@ -806,7 +841,7 @@ export function makeNegativeRateLimitTemplate(endpoint) {
     title: `Verify ${method} ${path} returns the correct rate limit response`,
     objective:
       "Verify that the API returns the correct response when the allowed request rate is exceeded.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.steps.push(
@@ -826,6 +861,8 @@ export function makeNegativeRateLimitTemplate(endpoint) {
     "Resilience and API protection",
   ];
 
+  tc.references = ["template_key:negative.rate_limit"];
+
   tc.review_notes = `Confirm the exact rate-limit threshold, headers, and 429 response structure for ${path}.`;
 
   return tc;
@@ -839,11 +876,11 @@ export function makeNegativeInvalidPaginationTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects invalid pagination parameter values`,
     objective:
       "Verify that the API rejects invalid or out-of-range pagination values.",
-    priority: "P2",
+    priority: "medium",
   });
 
   tc.test_data.query_params = {
-    ...buildQueryParams(endpoint),
+    ...(buildQueryParams(endpoint) || {}),
     page: -1,
     limit: 999999,
   };
@@ -866,6 +903,8 @@ export function makeNegativeInvalidPaginationTemplate(endpoint) {
     "Negative query validation",
   ];
 
+  tc.references = ["template_key:negative.invalid_pagination"];
+
   tc.review_notes = `Confirm the valid pagination range and exact validation behavior for ${path}.`;
 
   return tc;
@@ -885,7 +924,7 @@ export function makeNegativeNullRequiredFieldTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects null for required fields`,
     objective:
       "Verify that the API rejects null values for fields that are required and non-nullable.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.request_body = {
@@ -893,7 +932,10 @@ export function makeNegativeNullRequiredFieldTemplate(endpoint) {
     [firstKey]: null,
   };
 
-  tc.steps.push(`Set required field ${firstKey} to null.`, "Send the request.");
+  tc.steps.push(
+    `Set required field '${firstKey}' to null.`,
+    "Send the request.",
+  );
 
   tc.expected_results = [
     "The API rejects the request.",
@@ -905,6 +947,11 @@ export function makeNegativeNullRequiredFieldTemplate(endpoint) {
     "Required field validation",
     "Null handling",
     "Negative request validation",
+  ];
+
+  tc.references = [
+    "template_key:negative.null_required_field",
+    `field:${firstKey}`,
   ];
 
   tc.review_notes = `Confirm the actual required field name and null-validation response for ${path}.`;

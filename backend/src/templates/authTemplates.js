@@ -4,32 +4,24 @@ function buildModuleName(endpoint) {
   return `${endpoint?.method || "API"} ${endpoint?.path || ""}`.trim();
 }
 
-function buildPathParams(endpoint) {
-  const out = {};
-  const pathParams = Array.isArray(endpoint?.params?.path)
-    ? endpoint.params.path
-    : [];
-  for (const p of pathParams) {
-    out[p.name] = `<valid_${p.name}>`;
-  }
-  return out;
+function getResolvedValidRequest(endpoint) {
+  const resolved = endpoint?._resolvedTestData || {};
+
+  return {
+    path_params: resolved?.valid?.path || {},
+    query_params: resolved?.valid?.query || {},
+    headers: resolved?.valid?.headers || {},
+    cookies: resolved?.valid?.cookies || {},
+    request_body:
+      resolved?.valid?.body !== undefined ? resolved.valid.body : null,
+  };
 }
 
-function buildQueryParams(endpoint) {
-  const out = {};
-  const query = Array.isArray(endpoint?.params?.query)
-    ? endpoint.params.query
-    : [];
-  for (const p of query) {
-    out[p.name] = p.required ? `<required_${p.name}>` : `<optional_${p.name}>`;
-  }
-  return out;
-}
-
-function baseAuthCase(endpoint, { title, objective, priority = "P0" }) {
+function baseAuthCase(endpoint, { title, objective, priority = "critical" }) {
   const method = String(endpoint?.method || "GET").toUpperCase();
   const path = endpoint?.path || "/";
   const moduleName = buildModuleName(endpoint);
+  const validRequest = getResolvedValidRequest(endpoint);
 
   return {
     id: "",
@@ -44,10 +36,14 @@ function baseAuthCase(endpoint, { title, objective, priority = "P0" }) {
       "The endpoint is expected to require authentication or authorization.",
     ],
     test_data: {
-      path_params: buildPathParams(endpoint),
-      query_params: buildQueryParams(endpoint),
-      headers: {},
-      request_body: null,
+      path_params: validRequest.path_params || {},
+      query_params: validRequest.query_params || {},
+      headers: validRequest.headers || {},
+      cookies: validRequest.cookies || {},
+      request_body:
+        validRequest.request_body !== undefined
+          ? validRequest.request_body
+          : null,
     },
     steps: [
       "Open an API client such as Postman or any approved API testing tool.",
@@ -75,24 +71,42 @@ export function makeAuthMissingCredentialsTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects request without authentication credentials`,
     objective:
       "Verify that the API rejects access when authentication credentials are not provided.",
-    priority: "P0",
+    priority: "critical",
   });
 
+  if (tc.test_data.headers) {
+    delete tc.test_data.headers.Authorization;
+    delete tc.test_data.headers.authorization;
+    delete tc.test_data.headers["X-API-Key"];
+    delete tc.test_data.headers["x-api-key"];
+    delete tc.test_data.headers.Cookie;
+    delete tc.test_data.headers.cookie;
+  }
+
+  if (tc.test_data.cookies) {
+    tc.test_data.cookies = {};
+  }
+
   tc.steps.push(
-    "Do not send authentication credentials or authorization headers.",
+    "Do not send authentication credentials, session cookies, API keys, or authorization headers.",
     "Send the request.",
   );
 
   tc.expected_results = [
     "The API rejects the request.",
     "An authentication or authorization error response is returned, such as HTTP 401 or HTTP 403.",
-    "The response indicates that credentials are missing or invalid.",
+    "The response indicates that credentials are missing or not provided.",
   ];
 
   tc.validation_focus = [
     "Authentication enforcement",
     "Unauthorized access handling",
     "Security negative validation",
+  ];
+
+  tc.references = [
+    "template_key:auth.missing_credentials",
+    "auth_case:missing_credentials",
   ];
 
   tc.review_notes = `Confirm the exact unauthorized response code and error structure for ${path}.`;
@@ -108,12 +122,14 @@ export function makeAuthInvalidCredentialsTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects request with invalid authentication credentials`,
     objective:
       "Verify that the API rejects access when invalid authentication credentials or tokens are provided.",
-    priority: "P0",
+    priority: "critical",
   });
 
   tc.test_data.headers = {
-    Authorization: "Bearer <invalid_token>",
+    ...(tc.test_data.headers || {}),
+    Authorization: "Bearer invalid-token-123",
   };
+  delete tc.test_data.headers.authorization;
 
   tc.steps.push(
     "Send an invalid authentication token or invalid credentials in the authorization header.",
@@ -132,6 +148,11 @@ export function makeAuthInvalidCredentialsTemplate(endpoint) {
     "Unauthorized access rejection",
   ];
 
+  tc.references = [
+    "template_key:auth.invalid_credentials",
+    "auth_case:invalid_credentials",
+  ];
+
   tc.review_notes = `Confirm the exact invalid-credential response code and error body for ${path}.`;
 
   return tc;
@@ -145,12 +166,14 @@ export function makeAuthExpiredCredentialsTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects request with expired authentication credentials`,
     objective:
       "Verify that the API rejects access when an expired authentication token or credential is provided.",
-    priority: "P1",
+    priority: "high",
   });
 
   tc.test_data.headers = {
-    Authorization: "Bearer <expired_token>",
+    ...(tc.test_data.headers || {}),
+    Authorization: "Bearer expired-token-123",
   };
+  delete tc.test_data.headers.authorization;
 
   tc.steps.push(
     "Send an expired authentication token or expired credentials in the authorization header.",
@@ -169,6 +192,11 @@ export function makeAuthExpiredCredentialsTemplate(endpoint) {
     "Authentication validation",
   ];
 
+  tc.references = [
+    "template_key:auth.expired_credentials",
+    "auth_case:expired_credentials",
+  ];
+
   tc.review_notes = `Confirm the exact expired-token response code and error body for ${path}.`;
 
   return tc;
@@ -182,12 +210,14 @@ export function makeAuthForbiddenRoleTemplate(endpoint) {
     title: `Verify ${method} ${path} rejects caller without required role or scope`,
     objective:
       "Verify that the API rejects authenticated callers who do not have the required role, permission, or scope.",
-    priority: "P0",
+    priority: "critical",
   });
 
   tc.test_data.headers = {
-    Authorization: "Bearer <valid_but_insufficient_scope_token>",
+    ...(tc.test_data.headers || {}),
+    Authorization: "Bearer valid-but-low-privilege-token",
   };
+  delete tc.test_data.headers.authorization;
 
   tc.steps.push(
     "Send a valid authentication token that does not include the required role, permission, or scope.",
@@ -204,6 +234,11 @@ export function makeAuthForbiddenRoleTemplate(endpoint) {
     "Authorization enforcement",
     "Role/scope validation",
     "Forbidden access handling",
+  ];
+
+  tc.references = [
+    "template_key:auth.forbidden_role",
+    "auth_case:forbidden_role",
   ];
 
   tc.review_notes = `Confirm the exact forbidden response code and role/scope error structure for ${path}.`;

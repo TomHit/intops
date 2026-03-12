@@ -3,6 +3,7 @@ import {
   buildQueryParams,
   buildHeaders,
 } from "../utils/paramDataGenerator.js";
+import { generateObjectFromSchema } from "../utils/testDataGenerator.js";
 
 function buildModuleName(endpoint) {
   const tags = Array.isArray(endpoint?.tags) ? endpoint.tags : [];
@@ -24,8 +25,6 @@ function getOptionalQueryParams(endpoint) {
   return query.filter((p) => !p?.required);
 }
 
-import { generateObjectFromSchema } from "../utils/testDataGenerator.js";
-
 function buildRequestBody(endpoint) {
   const schema =
     endpoint?.requestBody?.content?.["application/json"]?.schema ||
@@ -36,6 +35,7 @@ function buildRequestBody(endpoint) {
 
   return generateObjectFromSchema(schema);
 }
+
 function getSuccessStatus(endpoint) {
   const responses = endpoint?.responses || {};
   if (responses["200"]) return 200;
@@ -97,6 +97,126 @@ function getDocumentedErrorCodes(endpoint) {
   return Object.keys(responses)
     .filter((code) => /^[45]\d\d$/.test(String(code)))
     .slice(0, 10);
+}
+
+function getResponseSchema(endpoint) {
+  const responses = endpoint?.responses || {};
+  for (const code of Object.keys(responses)) {
+    if (!/^2\d\d$/.test(String(code))) continue;
+
+    const schema =
+      responses[code]?.content?.["application/json"]?.schema ||
+      responses[code]?.content?.["application/*+json"]?.schema ||
+      null;
+
+    if (schema) return schema;
+  }
+
+  return null;
+}
+
+function getRequestSchema(endpoint) {
+  return (
+    endpoint?.requestBody?.content?.["application/json"]?.schema ||
+    endpoint?.requestBody?.content?.["application/*+json"]?.schema ||
+    null
+  );
+}
+
+function describeSchemaType(schema = {}) {
+  if (schema?.type) return schema.type;
+  if (schema?.properties) return "object";
+  if (schema?.items) return "array";
+  return "value";
+}
+
+function getTopLevelResponseProperties(endpoint) {
+  const schema = getResponseSchema(endpoint);
+  const props =
+    schema?.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+  return Object.entries(props);
+}
+
+function getRequestSchemaProperties(endpoint) {
+  const schema = getRequestSchema(endpoint);
+  const props =
+    schema?.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+  return Object.entries(props);
+}
+
+function buildRequiredFieldAssertions(endpoint) {
+  const schema = getResponseSchema(endpoint);
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+
+  return required
+    .slice(0, 5)
+    .map((field) => `Required response field '${field}' is present.`);
+}
+
+function buildResponseAssertions(endpoint, maxFields = 4) {
+  const entries = getTopLevelResponseProperties(endpoint).slice(0, maxFields);
+  const assertions = [];
+
+  for (const [fieldName, fieldSchema] of entries) {
+    const fieldType = describeSchemaType(fieldSchema);
+
+    if (fieldType === "object") {
+      assertions.push(`The response contains '${fieldName}' as an object.`);
+    } else if (fieldType === "array") {
+      assertions.push(`The response contains '${fieldName}' as an array.`);
+    } else {
+      assertions.push(
+        `The response contains '${fieldName}' with type '${fieldType}'.`,
+      );
+    }
+
+    if (fieldSchema?.format === "email") {
+      assertions.push(`Field '${fieldName}' follows email format.`);
+    }
+
+    if (Array.isArray(fieldSchema?.enum) && fieldSchema.enum.length > 0) {
+      assertions.push(
+        `Field '${fieldName}' contains one of the allowed values: ${fieldSchema.enum.join(", ")}.`,
+      );
+    }
+  }
+
+  return assertions;
+}
+
+function buildRequestFieldAssertions(endpoint, maxFields = 4) {
+  const entries = getRequestSchemaProperties(endpoint).slice(0, maxFields);
+  const assertions = [];
+
+  for (const [fieldName, fieldSchema] of entries) {
+    const fieldType = describeSchemaType(fieldSchema);
+
+    if (fieldType === "object") {
+      assertions.push(`Request field '${fieldName}' is sent as an object.`);
+    } else if (fieldType === "array") {
+      assertions.push(`Request field '${fieldName}' is sent as an array.`);
+    } else {
+      assertions.push(
+        `Request field '${fieldName}' matches type '${fieldType}'.`,
+      );
+    }
+
+    if (fieldSchema?.format === "email") {
+      assertions.push(`Request field '${fieldName}' follows email format.`);
+    }
+
+    if (Array.isArray(fieldSchema?.enum) && fieldSchema.enum.length > 0) {
+      assertions.push(
+        `Request field '${fieldName}' uses one of the allowed values: ${fieldSchema.enum.join(", ")}.`,
+      );
+    }
+  }
+
+  return assertions;
 }
 
 function hasRequestBody(endpoint) {
@@ -170,9 +290,15 @@ export function makeContractSuccessTemplate(endpoint) {
     `The API responds with HTTP ${successStatus}.`,
     `The response body is returned in ${contentType} format.`,
     "The response structure matches the documented API contract.",
-    topFields.length > 0
-      ? `The response contains the expected top-level fields: ${topFields.join(", ")}.`
-      : "The response contains the expected top-level fields defined in the API contract.",
+    ...buildRequiredFieldAssertions(endpoint),
+    ...buildResponseAssertions(endpoint, 4),
+    ...(topFields.length > 0 &&
+    buildRequiredFieldAssertions(endpoint).length === 0 &&
+    buildResponseAssertions(endpoint, 4).length === 0
+      ? [
+          `The response contains the expected top-level fields: ${topFields.join(", ")}.`,
+        ]
+      : []),
   ];
 
   tc.validation_focus = [
@@ -180,6 +306,9 @@ export function makeContractSuccessTemplate(endpoint) {
     "Response content type",
     "Top-level response contract",
     "Presence of expected response fields",
+    ...getTopLevelResponseProperties(endpoint)
+      .slice(0, 3)
+      .map(([field]) => `Field:${field}`),
   ];
 
   return tc;
@@ -232,7 +361,9 @@ export function makeContractRequiredFieldsTemplate(endpoint) {
     `The API responds with HTTP ${successStatus}.`,
     "All mandatory response fields defined in the contract are present.",
     "No required field is missing or returned as an unexpected structure.",
-    ...(topFields.length > 0
+    ...buildRequiredFieldAssertions(endpoint),
+    ...(topFields.length > 0 &&
+    buildRequiredFieldAssertions(endpoint).length === 0
       ? [
           `The tester can confirm the presence of these documented fields: ${topFields.join(", ")}.`,
         ]
@@ -243,6 +374,9 @@ export function makeContractRequiredFieldsTemplate(endpoint) {
     "Mandatory response fields",
     "Presence of documented keys",
     "Contract completeness",
+    ...getTopLevelResponseProperties(endpoint)
+      .slice(0, 3)
+      .map(([field]) => `Field:${field}`),
   ];
 
   return tc;
@@ -389,19 +523,33 @@ export function makeContractRequestBodyTemplate(endpoint) {
     "Review the request body fields sent in the request and compare them with the documented request contract.",
   );
 
+  const requestSchema = getRequestSchema(endpoint);
+  const requestRequired = Array.isArray(requestSchema?.required)
+    ? requestSchema.required
+    : [];
+
   tc.expected_results = [
     "The request body structure is accepted by the API.",
-    ...(bodyFields.length > 0
+    ...requestRequired
+      .slice(0, 5)
+      .map((field) => `Required request field '${field}' is included.`),
+    ...buildRequestFieldAssertions(endpoint, 4),
+    ...(bodyFields.length > 0 &&
+    requestRequired.length === 0 &&
+    buildRequestFieldAssertions(endpoint, 4).length === 0
       ? [
           `The tester can confirm the documented request body fields: ${bodyFields.join(", ")}.`,
         ]
-      : ["The request body matches the documented API contract."]),
+      : []),
     "No contract-related request body error occurs for valid input.",
   ];
 
   tc.validation_focus = [
     "Request body contract",
     "Documented request body fields",
+    ...getRequestSchemaProperties(endpoint)
+      .slice(0, 3)
+      .map(([field]) => `Field:${field}`),
   ];
 
   return tc;
@@ -425,6 +573,7 @@ export function makeContractErrorResponseTemplate(endpoint) {
       ? [`The documented error status codes include: ${errorCodes.join(", ")}.`]
       : ["Documented error responses are available where applicable."]),
     "Error response behavior is consistent with the API contract.",
+    "Each documented error response should return a controlled and understandable failure payload.",
   ];
 
   tc.validation_focus = ["Error response contract", "Documented error codes"];
