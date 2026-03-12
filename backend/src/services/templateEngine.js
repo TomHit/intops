@@ -2,6 +2,7 @@ import { loadRuleCatalog } from "../rules/loadRuleCatalog.js";
 import { RULE_CONDITION_MAP } from "../rules/ruleConditionMap.js";
 import { TEMPLATE_REGISTRY } from "./templateRegistry.js";
 import { resolveEndpointTestData } from "./testDataResolver.js";
+import { generateNegativeCases } from "./negativeCaseGenerator.js";
 function firstItem(list) {
   return Array.isArray(list) && list.length > 0 ? list[0] : null;
 }
@@ -484,6 +485,7 @@ function annotateCase(tc, rule, endpoint) {
   }
 
   const resolvedData = inferResolvedTestData(resolvedTemplateKey, endpoint);
+
   tc.test_data = {
     path_params: mergeObjects(
       resolvedData?.path_params,
@@ -494,12 +496,12 @@ function annotateCase(tc, rule, endpoint) {
       tc?.test_data?.query_params,
     ),
     headers: mergeObjects(resolvedData?.headers, tc?.test_data?.headers),
+    cookies: mergeObjects(resolvedData?.cookies, tc?.test_data?.cookies),
     request_body:
       tc?.test_data?.request_body !== undefined
         ? tc.test_data.request_body
         : resolvedData?.request_body,
   };
-
   return tc;
 }
 function resolveLegacyTemplateKey(rule) {
@@ -991,7 +993,8 @@ export async function generateCasesForEndpoint(endpoint, options = {}) {
 
   if (include.includes("negative")) {
     const autoNegativeCases = buildUniversalNegativeCases(enrichedEndpoint);
-    cases.push(...autoNegativeCases);
+    const schemaNegativeCases = generateNegativeCases(enrichedEndpoint);
+    cases.push(...autoNegativeCases, ...schemaNegativeCases);
   }
 
   return dedupeCases(cases);
