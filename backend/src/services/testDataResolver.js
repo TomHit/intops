@@ -39,8 +39,8 @@ function inferStringFromPattern(pattern) {
 
   if (pattern === "^[A-Z]{3}$") return "ABC";
   if (pattern === "^[A-Z]{2,5}$") return "TEST";
-  if (pattern === "^\\d{10}$") return "9876543210";
-  if (pattern === "^\\d{6}$") return "123456";
+  if (pattern === "^\\d{10}$" || pattern === "^[0-9]{10}$") return "9876543210";
+  if (pattern === "^\\d{6}$" || pattern === "^[0-9]{6}$") return "123456";
   if (pattern.includes("@")) return "qa@example.com";
 
   return undefined;
@@ -53,7 +53,7 @@ function fieldNameHints(fieldName = "") {
     return "qa@example.com";
   }
   if (n === "password" || n.includes("password") || n === "passcode") {
-    return "Pass@123";
+    return "Secret123!";
   }
   if (
     n === "username" ||
@@ -76,9 +76,8 @@ function fieldNameHints(fieldName = "") {
   if (n === "url" || n.endsWith("_url") || n.includes("website")) {
     return "https://example.com";
   }
-  if (n === "authorization" || n === "auth") return "Bearer <token>";
-  if (n === "authorization" || n === "auth") return "Bearer <token>";
-  if (n.includes("bearer")) return "Bearer <token>";
+  if (n === "authorization" || n === "auth") return "Bearer sample-token-123";
+  if (n.includes("bearer")) return "Bearer sample-token-123";
   if (n === "token" || n.includes("token")) return "sample-token-123";
   if (n === "api_key" || n === "apikey" || n.includes("api_key")) {
     return "sample-api-key-123";
@@ -90,7 +89,7 @@ function fieldNameHints(fieldName = "") {
   }
   if (n === "x-device-id") return "dev_123";
   if (n === "otp" || n.includes("otp")) return "123456";
-  if (n === "code" || n.endsWith("_code")) return "CODE123";
+  if (n === "code" || n.endsWith("_code")) return "123456";
   if (n === "status") return "active";
   if (n === "type") return "default";
   if (n === "role") return "user";
@@ -104,7 +103,7 @@ function fieldNameHints(fieldName = "") {
     return "2026-01-01T00:00:00Z";
   }
   if (n === "id" || n.endsWith("_id") || n === "userid" || n === "user_id") {
-    return "123";
+    return "sample-id";
   }
 
   return undefined;
@@ -138,14 +137,19 @@ function resolveValidPrimitive(schema = {}, fieldName = "") {
   if (exampleValue !== undefined) {
     return { value: clone(exampleValue), source: "example/default/enum" };
   }
-
   const fieldHint = fieldNameHints(fieldName);
+
   if (
     fieldHint !== undefined &&
-    schema.type !== "integer" &&
-    schema.type !== "number" &&
-    schema.type !== "boolean"
+    (schema.type === "integer" || schema.type === "number")
   ) {
+    return {
+      value: schema.type === "integer" ? 123 : 123.45,
+      source: "field_hint_numeric",
+    };
+  }
+
+  if (fieldHint !== undefined && schema.type !== "boolean") {
     return {
       value: coerceStringLength(fieldHint, schema),
       source: "field_hint",
@@ -199,7 +203,6 @@ function resolveValidPrimitive(schema = {}, fieldName = "") {
       return { value: 1, source: "type" };
     }
 
-    case "number":
     case "number": {
       if (Number.isFinite(schema.minimum) && Number.isFinite(schema.maximum)) {
         return {

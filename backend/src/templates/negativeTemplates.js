@@ -546,6 +546,9 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
   const path = endpoint?.path || "/";
   const enumField = getFirstEnumField(endpoint);
   const fieldName = enumField?.name || "<enum_field>";
+  const allowed = Array.isArray(enumField?.schema?.enum)
+    ? enumField.schema.enum
+    : [];
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects values outside the allowed enum set`,
@@ -555,12 +558,14 @@ export function makeNegativeInvalidEnumTemplate(endpoint) {
   });
 
   tc.test_data.request_body = {
-    ...(buildRequestBody(endpoint) || {}),
-    [fieldName]: "<invalid_enum_value>",
+    ...(tc.test_data.request_body || {}),
+    [fieldName]: "__INVALID_ENUM__",
   };
 
   tc.steps.push(
-    `Set ${fieldName} to a value outside the documented enum set.`,
+    allowed.length > 0
+      ? `Set ${fieldName} to a value outside the documented enum: [${allowed.join(", ")}].`
+      : `Set ${fieldName} to a value outside the documented enum set.`,
     "Send the request.",
   );
 
@@ -597,7 +602,16 @@ export function makeNegativeInvalidFormatTemplate(endpoint) {
 
   tc.test_data.request_body = {
     ...(buildRequestBody(endpoint) || {}),
-    [fieldName]: "<invalid_format_value>",
+    [fieldName]:
+      formatName === "email"
+        ? "not-an-email"
+        : formatName === "uuid"
+          ? "not-a-uuid"
+          : formatName === "date"
+            ? "99-99-9999"
+            : formatName === "date-time"
+              ? "not-a-datetime"
+              : "invalid-format",
   };
 
   tc.steps.push(
@@ -627,6 +641,7 @@ export function makeNegativeStringTooLongTemplate(endpoint) {
   const path = endpoint?.path || "/";
   const field = getFirstStringConstraintField(endpoint);
   const fieldName = field?.name || "<string_field>";
+  const maxLen = field?.schema?.maxLength;
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects string values exceeding maximum length`,
@@ -636,18 +651,23 @@ export function makeNegativeStringTooLongTemplate(endpoint) {
   });
 
   tc.test_data.request_body = {
-    ...(buildRequestBody(endpoint) || {}),
-    [fieldName]: "X".repeat(300),
+    ...(tc.test_data.request_body || {}),
+    [fieldName]:
+      typeof maxLen === "number" ? "X".repeat(maxLen + 1) : "X".repeat(300),
   };
 
   tc.steps.push(
-    `Set ${fieldName} to a string longer than the documented maximum length.`,
+    typeof maxLen === "number"
+      ? `Set ${fieldName} to a string longer than the maximum allowed length (${maxLen} characters).`
+      : `Set ${fieldName} to a string longer than the documented maximum length.`,
     "Send the request.",
   );
 
   tc.expected_results = [
     "The API rejects the request.",
-    "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
+    typeof maxLen === "number"
+      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because ${fieldName} exceeds the maximum length of ${maxLen}.`
+      : "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
     "The response indicates that the supplied string value is too long.",
   ];
 
@@ -667,6 +687,7 @@ export function makeNegativeNumericAboveMaximumTemplate(endpoint) {
   const path = endpoint?.path || "/";
   const field = getFirstNumericConstraintField(endpoint);
   const fieldName = field?.name || "<numeric_field>";
+  const maxVal = field?.schema?.maximum;
 
   const tc = baseNegativeCase(endpoint, {
     title: `Verify ${method} ${path} rejects numeric values above the documented maximum`,
@@ -676,18 +697,22 @@ export function makeNegativeNumericAboveMaximumTemplate(endpoint) {
   });
 
   tc.test_data.request_body = {
-    ...(buildRequestBody(endpoint) || {}),
-    [fieldName]: 999999999,
+    ...(tc.test_data.request_body || {}),
+    [fieldName]: typeof maxVal === "number" ? maxVal + 1 : 999999999,
   };
 
   tc.steps.push(
-    `Set ${fieldName} to a numeric value above the documented maximum.`,
+    typeof maxVal === "number"
+      ? `Set ${fieldName} to a numeric value above the documented maximum (${maxVal}).`
+      : `Set ${fieldName} to a numeric value above the documented maximum.`,
     "Send the request.",
   );
 
   tc.expected_results = [
     "The API rejects the request.",
-    "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
+    typeof maxVal === "number"
+      ? `A client-side validation error such as HTTP 400 or HTTP 422 is returned because ${fieldName} exceeds the maximum value of ${maxVal}.`
+      : "A client-side validation error such as HTTP 400 or HTTP 422 is returned.",
     "The response indicates that the supplied numeric value is out of range.",
   ];
 
@@ -850,7 +875,10 @@ export function makeNegativeNullRequiredFieldTemplate(endpoint) {
   const method = String(endpoint?.method || "POST").toUpperCase();
   const path = endpoint?.path || "/";
 
-  const body = buildRequestBody(endpoint) || {};
+  const body =
+    endpoint?._resolvedTestData?.valid?.body ||
+    buildRequestBody(endpoint) ||
+    {};
   const firstKey = Object.keys(body)[0] || "required_field";
 
   const tc = baseNegativeCase(endpoint, {

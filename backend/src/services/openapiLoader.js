@@ -9,6 +9,30 @@ function isHttpUrl(s) {
   );
 }
 
+function normalizeSpecUrl(input) {
+  const url = String(input || "").trim();
+  if (!url) return url;
+
+  if (url.startsWith("https://github.com/") && url.includes("/blob/")) {
+    return url
+      .replace("https://github.com/", "https://raw.githubusercontent.com/")
+      .replace("/blob/", "/");
+  }
+
+  return url;
+}
+
+function buildCandidateSpecUrls(input) {
+  const raw = String(input || "").trim();
+  const normalized = normalizeSpecUrl(raw);
+  const out = [];
+
+  if (raw) out.push(raw);
+  if (normalized && normalized !== raw) out.push(normalized);
+
+  return [...new Set(out)];
+}
+
 function parseMaybeYaml(text, filename = "") {
   const trimmed = (text || "").trim();
   if (!trimmed) throw new Error("OpenAPI is empty");
@@ -17,6 +41,42 @@ function parseMaybeYaml(text, filename = "") {
   if (looksJson) return JSON.parse(trimmed);
 
   return yaml.load(trimmed);
+}
+
+async function fetchSpecFromCandidates(inputUrl) {
+  const candidateUrls = buildCandidateSpecUrls(inputUrl);
+
+  let lastStatus = null;
+  let lastUrlTried = null;
+  let text = null;
+  let resolvedUrl = null;
+
+  for (const candidateUrl of candidateUrls) {
+    lastUrlTried = candidateUrl;
+
+    const res = await fetch(candidateUrl, {
+      headers: {
+        Accept:
+          "application/json, text/plain, application/yaml, text/yaml, application/x-yaml, */*",
+      },
+    });
+
+    if (res.ok) {
+      text = await res.text();
+      resolvedUrl = candidateUrl;
+      break;
+    }
+
+    lastStatus = res.status;
+  }
+
+  if (text == null) {
+    throw new Error(
+      `Failed to load OpenAPI URL: ${lastStatus || "unknown"}${lastUrlTried ? ` (${lastUrlTried})` : ""}`,
+    );
+  }
+
+  return { text, resolvedUrl };
 }
 
 export async function loadProjectConfig(projectId) {
@@ -33,19 +93,8 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
       throw new Error("Only http/https OpenAPI URL is supported right now");
     }
 
-    const res = await fetch(override, {
-      headers: {
-        Accept:
-          "application/json, text/plain, application/yaml, text/yaml, */*",
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Failed to load OpenAPI URL: ${res.status}`);
-    }
-
-    const text = await res.text();
-    const doc = parseMaybeYaml(text, override);
+    const { text, resolvedUrl } = await fetchSpecFromCandidates(override);
+    const doc = parseMaybeYaml(text, resolvedUrl || override);
 
     return {
       cfg: {
@@ -53,7 +102,7 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
         project_name: projectId,
         openapi: {
           mode: "url",
-          value: override,
+          value: resolvedUrl || override,
         },
       },
       doc,
@@ -70,11 +119,8 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
   let text = "";
 
   if (mode === "url" || isHttpUrl(val)) {
-    const res = await fetch(val, {
-      headers: { Accept: "application/json,text/yaml,*/*" },
-    });
-    if (!res.ok) throw new Error(`OpenAPI fetch failed: ${res.status}`);
-    text = await res.text();
+    const { text: fetchedText } = await fetchSpecFromCandidates(val);
+    text = fetchedText;
     return { cfg, doc: parseMaybeYaml(text, val) };
   }
 

@@ -10,6 +10,46 @@ function normalizeMethod(m) {
   return String(m || "GET").toUpperCase();
 }
 
+function buildTooLongValue(fieldSchema = {}) {
+  const maxLen =
+    typeof fieldSchema.maxLength === "number" ? fieldSchema.maxLength : 100;
+
+  return "x".repeat(maxLen + 1);
+}
+
+function buildTooShortValue(fieldSchema = {}) {
+  const minLen =
+    typeof fieldSchema.minLength === "number" ? fieldSchema.minLength : 1;
+
+  return minLen <= 1 ? "" : "x".repeat(minLen - 1);
+}
+
+function buildBelowMinimumValue(fieldSchema = {}) {
+  const min = typeof fieldSchema.minimum === "number" ? fieldSchema.minimum : 0;
+
+  return min - 1;
+}
+
+function buildAboveMaximumValue(fieldSchema = {}) {
+  const max =
+    typeof fieldSchema.maximum === "number" ? fieldSchema.maximum : 100;
+
+  return max + 1;
+}
+
+function buildInvalidFormatValue(fieldName, fieldSchema = {}) {
+  const name = String(fieldName || "").toLowerCase();
+  const format = String(fieldSchema.format || "").toLowerCase();
+
+  if (format === "email" || name.includes("email")) return "not-an-email";
+  if (format === "uuid") return "not-a-uuid";
+  if (format === "date") return "99-99-9999";
+  if (format === "date-time") return "not-a-datetime";
+  if (name === "totp" || name.includes("otp") || name.includes("code"))
+    return "12ab";
+  return "invalid-format";
+}
+
 function buildBaseCase(endpoint, title, objective) {
   return {
     id: "",
@@ -186,6 +226,7 @@ function generateBodyNegativeCases(endpoint, schema) {
       invalidEnumBody[field] = "__invalid_enum_value__";
 
       enumTc.test_data.request_body = invalidEnumBody;
+      enumTc.steps[3] = `Set ${field} to a value outside the documented enum: [${fieldSchema.enum.join(", ")}].`;
       enumTc.expected_results = [
         "The API rejects the request.",
         `A validation error is returned because field '${field}' has an invalid enum value.`,
@@ -197,6 +238,138 @@ function generateBodyNegativeCases(endpoint, schema) {
       ];
       enumTc.references.push(`negative:invalid_enum:${field}`);
       cases.push(enumTc);
+    }
+
+    if (typeof fieldSchema.maxLength === "number") {
+      const maxTc = buildBaseCase(
+        endpoint,
+        `Verify ${normalizeMethod(endpoint.method)} ${endpoint.path} rejects overlength value for field '${field}'`,
+        `Verify that the endpoint rejects the request when field '${field}' exceeds the maximum allowed length.`,
+      );
+
+      const invalidBody = deepClone(validBody);
+      invalidBody[field] = buildTooLongValue(fieldSchema);
+
+      maxTc.test_data.request_body = invalidBody;
+      maxTc.steps[3] = `Set ${field} to a string longer than the maximum allowed length (${fieldSchema.maxLength} characters).`;
+      maxTc.expected_results = [
+        "The API rejects the request.",
+        `A validation error is returned because field '${field}' exceeds the maximum length of ${fieldSchema.maxLength}.`,
+        "The API does not accept overlength input.",
+      ];
+      maxTc.validation_focus = [
+        "String length validation",
+        "Maximum length enforcement",
+        field,
+      ];
+      maxTc.references.push(`negative:max_length:${field}`);
+      cases.push(maxTc);
+    }
+
+    if (typeof fieldSchema.minLength === "number") {
+      const minTc = buildBaseCase(
+        endpoint,
+        `Verify ${normalizeMethod(endpoint.method)} ${endpoint.path} rejects undersized value for field '${field}'`,
+        `Verify that the endpoint rejects the request when field '${field}' is shorter than the minimum allowed length.`,
+      );
+
+      const invalidBody = deepClone(validBody);
+      invalidBody[field] = buildTooShortValue(fieldSchema);
+
+      minTc.test_data.request_body = invalidBody;
+      minTc.steps[3] = `Set ${field} to a string shorter than the minimum allowed length (${fieldSchema.minLength} characters).`;
+      minTc.expected_results = [
+        "The API rejects the request.",
+        `A validation error is returned because field '${field}' is shorter than the minimum length of ${fieldSchema.minLength}.`,
+        "The API does not accept undersized input.",
+      ];
+      minTc.validation_focus = [
+        "String length validation",
+        "Minimum length enforcement",
+        field,
+      ];
+      minTc.references.push(`negative:min_length:${field}`);
+      cases.push(minTc);
+    }
+
+    if (
+      fieldSchema.format ||
+      field.toLowerCase().includes("email") ||
+      field.toLowerCase().includes("otp") ||
+      field.toLowerCase().includes("code")
+    ) {
+      const formatTc = buildBaseCase(
+        endpoint,
+        `Verify ${normalizeMethod(endpoint.method)} ${endpoint.path} rejects invalid format for field '${field}'`,
+        `Verify that the endpoint rejects the request when field '${field}' has an invalid format.`,
+      );
+
+      const invalidBody = deepClone(validBody);
+      invalidBody[field] = buildInvalidFormatValue(field, fieldSchema);
+
+      formatTc.test_data.request_body = invalidBody;
+      formatTc.steps[3] = `Set ${field} to a value that violates the documented format${fieldSchema.format ? ` (${fieldSchema.format})` : ""}.`;
+      formatTc.expected_results = [
+        "The API rejects the request.",
+        `A validation error is returned because field '${field}' does not match the documented format${fieldSchema.format ? ` '${fieldSchema.format}'` : ""}.`,
+      ];
+      formatTc.validation_focus = [
+        "Format validation",
+        "Negative validation",
+        field,
+      ];
+      formatTc.references.push(`negative:invalid_format:${field}`);
+      cases.push(formatTc);
+    }
+
+    if (typeof fieldSchema.minimum === "number") {
+      const minNumTc = buildBaseCase(
+        endpoint,
+        `Verify ${normalizeMethod(endpoint.method)} ${endpoint.path} rejects below-minimum value for field '${field}'`,
+        `Verify that the endpoint rejects the request when field '${field}' is below the minimum allowed value.`,
+      );
+
+      const invalidBody = deepClone(validBody);
+      invalidBody[field] = buildBelowMinimumValue(fieldSchema);
+
+      minNumTc.test_data.request_body = invalidBody;
+      minNumTc.steps[3] = `Set ${field} to a value below the documented minimum (${fieldSchema.minimum}).`;
+      minNumTc.expected_results = [
+        "The API rejects the request.",
+        `A validation error is returned because field '${field}' is below the minimum value of ${fieldSchema.minimum}.`,
+      ];
+      minNumTc.validation_focus = [
+        "Numeric minimum validation",
+        "Negative validation",
+        field,
+      ];
+      minNumTc.references.push(`negative:minimum:${field}`);
+      cases.push(minNumTc);
+    }
+
+    if (typeof fieldSchema.maximum === "number") {
+      const maxNumTc = buildBaseCase(
+        endpoint,
+        `Verify ${normalizeMethod(endpoint.method)} ${endpoint.path} rejects above-maximum value for field '${field}'`,
+        `Verify that the endpoint rejects the request when field '${field}' is above the maximum allowed value.`,
+      );
+
+      const invalidBody = deepClone(validBody);
+      invalidBody[field] = buildAboveMaximumValue(fieldSchema);
+
+      maxNumTc.test_data.request_body = invalidBody;
+      maxNumTc.steps[3] = `Set ${field} to a value above the documented maximum (${fieldSchema.maximum}).`;
+      maxNumTc.expected_results = [
+        "The API rejects the request.",
+        `A validation error is returned because field '${field}' is above the maximum value of ${fieldSchema.maximum}.`,
+      ];
+      maxNumTc.validation_focus = [
+        "Numeric maximum validation",
+        "Negative validation",
+        field,
+      ];
+      maxNumTc.references.push(`negative:maximum:${field}`);
+      cases.push(maxNumTc);
     }
   }
 
@@ -225,7 +398,6 @@ function generateBodyNegativeCases(endpoint, schema) {
 
   return cases;
 }
-
 function generateParamNegativeCases(endpoint) {
   const cases = [];
   const queryParams = ensureArray(endpoint?.params?.query);
