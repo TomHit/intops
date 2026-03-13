@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import EndpointSelector from "../components/EndpointSelector";
-import GenerationOptions from "../components/GenerationOptions";
 import TestCaseTable from "../components/TestCaseTable";
 import TestCaseDrawer from "../components/TestCaseDrawer";
 import ResultsSummary from "../components/ResultsSummary";
@@ -101,14 +100,7 @@ function buildCsvFromTable(rows) {
   return lines.join("\n");
 }
 
-function getStatusTone(status) {
-  if (status === "running") return "#4338ca";
-  if (status === "done") return "#166534";
-  if (status === "error") return "#991b1b";
-  return "#334155";
-}
-
-export default function GeneratorPage({ projectId, onBack }) {
+export default function GeneratorPage({ projectId, onBack, options }) {
   const [endpointsLoading, setEndpointsLoading] = useState(true);
   const [endpointsErr, setEndpointsErr] = useState("");
   const [endpoints, setEndpoints] = useState([]);
@@ -116,16 +108,6 @@ export default function GeneratorPage({ projectId, onBack }) {
   const [selection, setSelection] = useState({
     selected_endpoint_ids: [],
     filter: { q: "", method: "ALL", authOnly: false, tag: "ALL" },
-  });
-
-  const [options, setOptions] = useState({
-    include: ["contract", "schema"],
-    env: "staging",
-    auth_profile: "device",
-    guidance: "",
-    ai: false,
-    spec_source: "",
-    generation_mode: "balanced",
   });
 
   const [run, setRun] = useState({
@@ -208,9 +190,9 @@ export default function GeneratorPage({ projectId, onBack }) {
   }
 
   useEffect(() => {
-    loadEndpoints();
+    loadEndpoints(options?.spec_source || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, options?.spec_source]);
 
   async function generate() {
     const selected = selection.selected_endpoint_ids;
@@ -342,11 +324,6 @@ export default function GeneratorPage({ projectId, onBack }) {
   return (
     <div style={styles.page}>
       <style>{`
-        @keyframes pulseShimmer {
-          0% { background-position: 100% 50%; }
-          100% { background-position: 0 50%; }
-        }
-
         @keyframes buttonSpin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
@@ -381,12 +358,6 @@ export default function GeneratorPage({ projectId, onBack }) {
         .gen-dot:nth-child(4) { animation-delay: 0.36s; }
         .gen-dot:nth-child(5) { animation-delay: 0.48s; }
 
-        @media (max-width: 1240px) {
-          .workspace-body {
-            grid-template-columns: 1fr !important;
-          }
-        }
-
         @media (max-width: 1080px) {
           .toolbar-right {
             justify-content: flex-start !important;
@@ -420,8 +391,8 @@ export default function GeneratorPage({ projectId, onBack }) {
           <div style={styles.eyebrow}>AI test generation workspace</div>
           <h1 style={styles.heading}>Generate Tests</h1>
           <p style={styles.subtitle}>
-            Use AI to analyze your spec and produce contract, negative, and auth
-            tests.
+            Select endpoints and generate test cases using the defaults
+            configured on the Projects page.
           </p>
         </div>
       </div>
@@ -496,6 +467,21 @@ export default function GeneratorPage({ projectId, onBack }) {
           </div>
         </div>
 
+        <div style={styles.projectDefaultsBar}>
+          <span>
+            <strong>Env:</strong> {options.env || "-"}
+          </span>
+          <span>
+            <strong>Auth:</strong> {options.auth_profile || "-"}
+          </span>
+          <span>
+            <strong>Mode:</strong> {options.generation_mode || "balanced"}
+          </span>
+          <span>
+            <strong>AI:</strong> {options.ai ? "On" : "Off"}
+          </span>
+        </div>
+
         <div className="workspace-body" style={styles.workspaceBody}>
           <aside style={styles.explorerPane}>
             <div style={styles.explorerHeader}>
@@ -511,7 +497,7 @@ export default function GeneratorPage({ projectId, onBack }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => loadEndpoints()}
+                  onClick={() => loadEndpoints(options.spec_source || "")}
                   disabled={endpointsLoading || !projectId}
                   style={styles.secondaryBtn}
                 >
@@ -538,74 +524,6 @@ export default function GeneratorPage({ projectId, onBack }) {
               />
             )}
           </aside>
-
-          <div style={styles.setupPane}>
-            <div style={styles.setupHeader}>
-              <div style={styles.panelTitle}>Generation Setup</div>
-              <div style={styles.panelSubtle}>
-                Configure mode, scope, AI enrichment, and spec source.
-              </div>
-            </div>
-
-            <GenerationOptions options={options} onChange={setOptions} />
-
-            <div style={styles.setupActions}>
-              <button
-                type="button"
-                onClick={() => loadEndpoints(options.spec_source || "")}
-                disabled={!projectId}
-                style={styles.secondaryBtn}
-              >
-                Load from Spec URL
-              </button>
-            </div>
-
-            <div
-              style={{
-                ...styles.statusStrip,
-                color: getStatusTone(run.status),
-              }}
-            >
-              <div style={styles.statusLeft}>
-                <span style={styles.statusState}>
-                  {run.status === "idle" && "Ready"}
-                  {run.status === "running" && "Generating"}
-                  {run.status === "done" && "Completed"}
-                  {run.status === "error" && "Failed"}
-                </span>
-
-                {run.status === "running" && (
-                  <div style={styles.dotGroup}>
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                  </div>
-                )}
-
-                <span style={styles.statusMeta}>
-                  {run.status === "running" && runningStepLabel}
-                  {run.status === "idle" &&
-                    "Select one or more endpoints, then click Generate Tests."}
-                  {run.status === "done" &&
-                    `${tableRows.length} cases generated for ${selectedCount} selected endpoint${selectedCount === 1 ? "" : "s"}.`}
-                  {run.status === "error" &&
-                    (run.error?.message ||
-                      "Something went wrong during generation.")}
-                </span>
-              </div>
-
-              <div style={styles.statusFacts}>
-                <span>{selectedCount} selected</span>
-                <span>
-                  {String(
-                    run.generation_mode || options.generation_mode,
-                  ).toUpperCase()}
-                </span>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -657,7 +575,7 @@ export default function GeneratorPage({ projectId, onBack }) {
         {run.status === "running" && (
           <div style={styles.resultsProgress}>
             <div style={styles.resultsProgressTop}>
-              <span>Building test cases now...</span>
+              <span>{runningStepLabel || "Building test cases now..."}</span>
               <div style={styles.dotGroup}>
                 <span className="gen-dot" />
                 <span className="gen-dot" />
@@ -669,6 +587,14 @@ export default function GeneratorPage({ projectId, onBack }) {
             <div style={styles.resultsProgressBarTrack}>
               <div style={styles.resultsProgressBarFill} />
             </div>
+          </div>
+        )}
+
+        {run.status === "error" && (
+          <div
+            style={{ ...styles.infoBox, ...styles.errorInfo, marginBottom: 16 }}
+          >
+            {run.error?.message || "Something went wrong during generation."}
           </div>
         )}
 
@@ -700,9 +626,11 @@ const styles = {
   page: {
     display: "grid",
     gap: 18,
-    padding: "28px 24px 40px",
-    maxWidth: 1320,
-    margin: "0 auto",
+    padding: "28px 0 40px",
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "none",
+    margin: 0,
     background: "#f8fafc",
   },
 
@@ -797,6 +725,8 @@ const styles = {
   },
 
   workspaceShell: {
+    width: "100%",
+    minWidth: 0,
     border: "1px solid #e6eaf2",
     borderRadius: 24,
     background: "#fff",
@@ -806,11 +736,13 @@ const styles = {
 
   toolbar: {
     display: "grid",
-    gridTemplateColumns: "220px minmax(0, 1fr) auto",
+    gridTemplateColumns: "minmax(140px, 180px) minmax(0, 1fr) auto",
     gap: 16,
     alignItems: "center",
     padding: "16px 20px",
     borderBottom: "1px solid #eef2f7",
+    width: "100%",
+    minWidth: 0,
   },
 
   toolbarLeft: {
@@ -842,15 +774,27 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
+  projectDefaultsBar: {
+    display: "flex",
+    gap: 18,
+    flexWrap: "wrap",
+    padding: "12px 20px",
+    borderBottom: "1px solid #eef2f7",
+    background: "#f8fafc",
+    color: "#475569",
+    fontSize: 13,
+  },
+
   workspaceBody: {
     display: "grid",
-    gridTemplateColumns: "480px minmax(0, 1fr)",
+    gridTemplateColumns: "1fr",
     alignItems: "stretch",
+    width: "100%",
+    minWidth: 0,
   },
 
   explorerPane: {
     padding: 20,
-    borderRight: "1px solid #eef2f7",
     minWidth: 0,
   },
 
@@ -867,22 +811,6 @@ const styles = {
     fontSize: 14,
     fontWeight: 800,
     color: "#334155",
-  },
-
-  setupPane: {
-    padding: 20,
-    minWidth: 0,
-  },
-
-  setupHeader: {
-    marginBottom: 16,
-  },
-
-  setupActions: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-    marginTop: 14,
   },
 
   panelTitle: {
@@ -920,51 +848,6 @@ const styles = {
     color: "#991b1b",
   },
 
-  statusStrip: {
-    marginTop: 16,
-    borderRadius: 14,
-    border: "1px solid #e6eaf2",
-    background: "#f8fafc",
-    padding: "12px 14px",
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 14,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-
-  statusLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-    minWidth: 0,
-  },
-
-  statusState: {
-    fontSize: 13,
-    fontWeight: 800,
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
-    whiteSpace: "nowrap",
-  },
-
-  statusMeta: {
-    fontSize: 14,
-    color: "#475569",
-    lineHeight: 1.45,
-  },
-
-  statusFacts: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#334155",
-  },
-
   dotGroup: {
     display: "inline-flex",
     alignItems: "center",
@@ -972,12 +855,13 @@ const styles = {
   },
 
   resultsSection: {
+    width: "100%",
+    minWidth: 0,
     border: "1px solid #e6eaf2",
     borderRadius: 24,
     padding: 20,
     background: "#fff",
     boxShadow: "0 10px 32px rgba(15, 23, 42, 0.05)",
-    minWidth: 0,
   },
 
   resultsHeader: {

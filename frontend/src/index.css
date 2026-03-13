@@ -74,9 +74,14 @@ textarea,
 
 .app-shell {
   min-height: 100vh;
+  width: 100%;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 320px;
+  grid-template-columns: 220px minmax(0, 1fr) 320px;
   background: #f4f7fb;
+}
+
+.app-shell.no-ai-panel {
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .app-sidebar {
@@ -84,6 +89,7 @@ textarea,
   color: #e5e7eb;
   padding: 28px 20px;
   border-right: 1px solid rgba(255, 255, 255, 0.05);
+  min-width: 0;
 }
 
 .sidebar-brand {
@@ -198,6 +204,7 @@ textarea,
   display: flex;
   flex-direction: column;
   min-width: 0;
+  width: 100%;
 }
 
 .app-header {
@@ -207,6 +214,8 @@ textarea,
   align-items: flex-start;
   padding: 32px 32px 20px;
   background: #f4f7fb;
+  width: 100%;
+  min-width: 0;
 }
 
 .header-eyebrow {
@@ -236,6 +245,7 @@ textarea,
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .header-search {
@@ -260,16 +270,25 @@ textarea,
 }
 
 .app-content {
-  padding: 32px 40px;
-  max-width: 1400px;
-  margin: 0 auto;
+  flex: 1 1 auto;
   width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 32px 40px;
+}
+
+.app-content > * {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .ai-panel {
   padding: 28px 20px;
   background: #f3f7fc;
   border-left: 1px solid #e3ebf5;
+  min-width: 0;
 }
 
 .ai-panel-card {
@@ -787,6 +806,7 @@ textarea,
 .clean-table tr:last-child td {
   border-bottom: none;
 }
+
 .testcases-workspace {
   display: flex;
   flex-direction: column;
@@ -925,6 +945,7 @@ textarea,
     grid-template-columns: 1fr;
   }
 }
+
 /* ---------- TEAMS PAGE ---------- */
 
 .teams-workspace {
@@ -1073,6 +1094,7 @@ textarea,
   background: #faf5ff;
   color: #5b21b6;
 }
+
 .teams-form-card {
   margin-top: 18px;
   border: 1px solid #e8eef6;
@@ -1212,7 +1234,7 @@ textarea,
 
 .projects-grid {
   display: grid;
-  grid-template-columns: 1.45fr 0.9fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(420px, 0.95fr);
   gap: 24px;
   align-items: start;
 }
@@ -1220,6 +1242,7 @@ textarea,
 .projects-left,
 .projects-right {
   min-width: 0;
+  width: 100%;
 }
 
 .projects-panel-title {
@@ -1274,6 +1297,8 @@ textarea,
   display: flex;
   flex-direction: column;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
 .projects-info-card {
@@ -1281,6 +1306,9 @@ textarea,
   border-radius: 18px;
   background: #ffffff;
   padding: 18px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .projects-info-title {
@@ -1302,22 +1330,12 @@ textarea,
   }
 }
 
-@media (max-width: 900px) {
-  .projects-topbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .projects-form-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* ---------- RESPONSIVE ---------- */
 
 @media (max-width: 1200px) {
-  .app-shell {
-    grid-template-columns: 240px minmax(0, 1fr);
+  .app-shell,
+  .app-shell.no-ai-panel {
+    grid-template-columns: 220px minmax(0, 1fr);
   }
 
   .ai-panel {
@@ -1330,7 +1348,8 @@ textarea,
 }
 
 @media (max-width: 900px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.no-ai-panel {
     grid-template-columns: 1fr;
   }
 
@@ -1351,11 +1370,13 @@ textarea,
   }
 
   .app-content {
-    padding: 32px 40px;
-    max-width: 1400px;
-    margin: 0 auto;
+    padding: 24px 16px;
     width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
   }
+
   .header-search {
     width: 100%;
   }

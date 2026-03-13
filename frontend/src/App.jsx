@@ -647,6 +647,7 @@ function TestCasesPage({ projectId }) {
     </div>
   );
 }
+
 function ExecutionPage() {
   return (
     <div className="page-card">
@@ -703,6 +704,16 @@ export default function App() {
   const [activeNav, setActiveNav] = useState("overview");
   const [selectedProject, setSelectedProject] = useState(null);
 
+  const [generatorSettings, setGeneratorSettings] = useState({
+    include: ["contract", "schema"],
+    env: "staging",
+    auth_profile: "device",
+    guidance: "",
+    ai: false,
+    spec_source: "",
+    generation_mode: "balanced",
+  });
+
   const page = useMemo(() => {
     switch (activeNav) {
       case "teams":
@@ -715,6 +726,8 @@ export default function App() {
               setSelectedProject(id);
               setActiveNav("generate");
             }}
+            generatorSettings={generatorSettings}
+            onChangeGeneratorSettings={setGeneratorSettings}
           />
         );
 
@@ -723,6 +736,7 @@ export default function App() {
           <GeneratorPage
             projectId={selectedProject}
             onBack={() => setActiveNav("projects")}
+            options={generatorSettings}
           />
         );
 
@@ -742,7 +756,7 @@ export default function App() {
       default:
         return <OverviewPage />;
     }
-  }, [activeNav, selectedProject]);
+  }, [activeNav, selectedProject, generatorSettings]);
 
   return (
     <AppShell activeNav={activeNav} onChangeNav={setActiveNav}>

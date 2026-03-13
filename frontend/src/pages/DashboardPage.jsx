@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from "react";
 import ProjectCard from "../components/ProjectCard";
+import GenerationOptions from "../components/GenerationOptions";
 
-export default function DashboardPage({ onOpenProject }) {
+export default function DashboardPage({
+  onOpenProject,
+  generatorSettings,
+  onChangeGeneratorSettings,
+}) {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
   const [err, setErr] = useState("");
@@ -188,33 +193,27 @@ export default function DashboardPage({ onOpenProject }) {
         </section>
 
         <section className="page-card projects-right">
-          <div className="projects-panel-title">Project Model</div>
-
           <div className="projects-info-stack">
-            <div className="projects-info-card">
-              <div className="projects-info-title">How projects work</div>
-              <p className="muted" style={{ margin: 0 }}>
-                Each organization can have multiple projects, and each project
-                can later be assigned to one or more teams.
-              </p>
-            </div>
-
-            <div className="projects-info-card">
-              <div className="projects-info-title">Recommended flow</div>
-              <ul className="simple-list">
-                <li>Create a project</li>
-                <li>Upload or connect API spec</li>
-                <li>Open the project workspace</li>
-                <li>Generate test cases for selected endpoints</li>
-              </ul>
-            </div>
-
             <div className="projects-info-card projects-highlight-card">
-              <div className="projects-info-title">Why this matters</div>
+              <div className="projects-info-title">Setup Overview</div>
               <p style={{ margin: 0 }}>
-                Projects are the main working unit for specs, generated test
-                cases, review, and future execution history.
+                Configure the default generation profile for your selected
+                project. These settings will be reused when you open Generate
+                Tests.
               </p>
+            </div>
+
+            <div className="projects-info-card">
+              <div className="projects-info-title">Generation Setup</div>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Choose the default environment, auth profile, coverage scope,
+                and generation mode.
+              </p>
+
+              <GenerationOptions
+                options={generatorSettings}
+                onChange={onChangeGeneratorSettings}
+              />
             </div>
           </div>
         </section>

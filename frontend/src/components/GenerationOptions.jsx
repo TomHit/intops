@@ -47,9 +47,19 @@ export default function GenerationOptions({ options, onChange }) {
 
   return (
     <div style={styles.wrap}>
+      <div style={styles.heroNote}>
+        Configure the default generation profile for this project. These
+        settings will be reused when you open Generate Tests.
+      </div>
+
       <div style={styles.topGrid}>
         <section style={styles.sectionCard}>
-          <div style={styles.sectionTitle}>Test Types</div>
+          <div style={styles.sectionHead}>
+            <div>
+              <div style={styles.sectionEyebrow}>Coverage</div>
+              <div style={styles.sectionTitle}>Test Types</div>
+            </div>
+          </div>
 
           <div style={styles.pillGrid}>
             {TEST_TYPES.map((k) => (
@@ -82,12 +92,20 @@ export default function GenerationOptions({ options, onChange }) {
           </div>
 
           <div style={styles.help}>
-            Recommended for fast manual QA coverage: contract + schema.
+            Best starting point for manual QA: contract + schema with balanced
+            generation.
           </div>
         </section>
 
         <section style={styles.sectionCard}>
-          <div style={styles.twoCol}>
+          <div style={styles.sectionHead}>
+            <div>
+              <div style={styles.sectionEyebrow}>Runtime</div>
+              <div style={styles.sectionTitle}>Execution Defaults</div>
+            </div>
+          </div>
+
+          <div style={styles.fieldStack}>
             <div>
               <div style={styles.label}>Environment</div>
               <input
@@ -132,10 +150,11 @@ export default function GenerationOptions({ options, onChange }) {
                   onChange({ ...options, generation_mode: "balanced" })
                 }
               />
-              <div>
+              <div style={styles.radioContent}>
                 <div style={styles.radioTitle}>Balanced</div>
                 <div style={styles.radioHelp}>
-                  Generate for ready + partial endpoints.
+                  Covers ready and partially complete endpoints for practical QA
+                  output.
                 </div>
               </div>
             </label>
@@ -156,10 +175,10 @@ export default function GenerationOptions({ options, onChange }) {
                   onChange({ ...options, generation_mode: "strict" })
                 }
               />
-              <div>
+              <div style={styles.radioContent}>
                 <div style={styles.radioTitle}>Strict</div>
                 <div style={styles.radioHelp}>
-                  Generate only for spec-complete endpoints.
+                  Restricts generation to endpoints with stronger spec coverage.
                 </div>
               </div>
             </label>
@@ -167,8 +186,15 @@ export default function GenerationOptions({ options, onChange }) {
         </section>
       </div>
 
-      <section style={styles.section}>
-        <div style={styles.label}>Spec Source (Swagger / OpenAPI URL)</div>
+      <section style={styles.sectionCard}>
+        <div style={styles.sectionHead}>
+          <div>
+            <div style={styles.sectionEyebrow}>Specification</div>
+            <div style={styles.sectionTitle}>Spec Source</div>
+          </div>
+        </div>
+
+        <div style={styles.label}>Swagger / OpenAPI URL</div>
         <input
           value={options.spec_source || ""}
           onChange={(e) =>
@@ -179,8 +205,15 @@ export default function GenerationOptions({ options, onChange }) {
         />
       </section>
 
-      <section style={styles.section}>
-        <div style={styles.label}>Additional Guidance</div>
+      <section style={styles.sectionCard}>
+        <div style={styles.sectionHead}>
+          <div>
+            <div style={styles.sectionEyebrow}>Instructions</div>
+            <div style={styles.sectionTitle}>Additional Guidance</div>
+          </div>
+        </div>
+
+        <div style={styles.label}>Optional notes for generation</div>
         <textarea
           value={options.guidance || ""}
           onChange={(e) => onChange({ ...options, guidance: e.target.value })}
@@ -195,73 +228,116 @@ export default function GenerationOptions({ options, onChange }) {
 const styles = {
   wrap: {
     display: "grid",
-    gap: 14,
+    gap: 16,
+    width: "100%",
+    minWidth: 0,
   },
+
+  heroNote: {
+    padding: "14px 16px",
+    borderRadius: 16,
+    background:
+      "linear-gradient(135deg, rgba(99,102,241,0.08), rgba(59,130,246,0.06))",
+    border: "1px solid rgba(99,102,241,0.14)",
+    color: "#475569",
+    fontSize: 14,
+    lineHeight: 1.55,
+  },
+
   topGrid: {
     display: "grid",
-    gridTemplateColumns: "1.08fr 1fr",
-    gap: 14,
+    gridTemplateColumns: "minmax(280px, 1fr) minmax(320px, 1.15fr)",
+    gap: 16,
     alignItems: "start",
+    width: "100%",
+    minWidth: 0,
   },
-  section: {
-    display: "grid",
-    gap: 10,
-  },
+
   sectionCard: {
     display: "grid",
+    gap: 14,
+    border: "1px solid #e8eef6",
+    borderRadius: 20,
+    background: "linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%)",
+    padding: 18,
+    minWidth: 0,
+    boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)",
+  },
+
+  sectionHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: 12,
-    border: "1px solid #edf1f7",
-    borderRadius: 16,
-    background: "#fbfcfe",
-    padding: 14,
   },
-  sectionTitle: {
-    fontSize: 14,
+
+  sectionEyebrow: {
+    fontSize: 11,
     fontWeight: 800,
-    color: "#0f172a",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "#6366f1",
+    marginBottom: 6,
   },
+
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 900,
+    color: "#0f172a",
+    letterSpacing: "-0.02em",
+  },
+
   label: {
     fontSize: 13,
     fontWeight: 800,
     color: "#334155",
-    marginBottom: 2,
+    marginBottom: 6,
   },
+
   pillGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
+    gap: 12,
   },
+
   pill: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "10px 12px",
-    borderRadius: 12,
+    padding: "12px 14px",
+    borderRadius: 14,
     border: "1px solid #dbe3f0",
     background: "#fff",
     cursor: "pointer",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 700,
     color: "#334155",
     minWidth: 0,
   },
+
   pillChecked: {
     borderColor: "#c7d2fe",
-    background: "#eef2ff",
+    background: "linear-gradient(135deg, #eef2ff, #f5f3ff)",
     color: "#3730a3",
     boxShadow: "inset 0 0 0 1px rgba(99,102,241,0.08)",
   },
+
   pillText: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    flex: 1,
+    minWidth: 0,
+    whiteSpace: "normal",
+    overflowWrap: "break-word",
+    wordBreak: "break-word",
+    lineHeight: 1.2,
   },
+
   hiddenCheckbox: {
     display: "none",
   },
+
   checkDot: {
-    width: 20,
-    height: 20,
+    width: 22,
+    height: 22,
     borderRadius: 999,
     border: "1px solid #cbd5e1",
     display: "inline-flex",
@@ -273,11 +349,13 @@ const styles = {
     background: "#fff",
     flexShrink: 0,
   },
+
   checkDotChecked: {
     background: "#4f46e5",
     borderColor: "#4f46e5",
     color: "#fff",
   },
+
   inlineRow: {
     display: "flex",
     alignItems: "center",
@@ -285,6 +363,7 @@ const styles = {
     gap: 12,
     flexWrap: "wrap",
   },
+
   aiToggle: {
     display: "flex",
     alignItems: "center",
@@ -292,88 +371,112 @@ const styles = {
     fontSize: 14,
     color: "#334155",
     fontWeight: 600,
+    flexWrap: "wrap",
   },
+
   smallBtn: {
-    padding: "9px 12px",
-    borderRadius: 12,
+    padding: "10px 14px",
+    borderRadius: 14,
     border: "1px solid #d6dce8",
     background: "#fff",
     cursor: "pointer",
     fontWeight: 700,
-    whiteSpace: "nowrap",
     color: "#0f172a",
+    width: "auto",
+    whiteSpace: "nowrap",
+    boxShadow: "0 4px 12px rgba(15, 23, 42, 0.04)",
   },
+
   help: {
     fontSize: 12,
     color: "#64748b",
-    lineHeight: 1.4,
+    lineHeight: 1.6,
   },
-  twoCol: {
+
+  fieldStack: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "repeat(2, minmax(160px, 1fr))",
     gap: 12,
   },
+
   input: {
     width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
+    padding: "12px 14px",
+    borderRadius: 14,
     border: "1px solid #dbe3f0",
     background: "#fff",
-    fontSize: 14,
+    fontSize: 15,
     boxSizing: "border-box",
     color: "#0f172a",
     outline: "none",
   },
+
   textarea: {
     width: "100%",
-    minHeight: 78,
-    padding: "10px 12px",
-    borderRadius: 12,
+    minHeight: 96,
+    padding: "12px 14px",
+    borderRadius: 14,
     border: "1px solid #dbe3f0",
     background: "#fff",
     fontSize: 14,
-    lineHeight: 1.45,
+    lineHeight: 1.5,
     resize: "vertical",
     boxSizing: "border-box",
     color: "#0f172a",
     outline: "none",
   },
+
   modeHeaderRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
   },
+
   modeRow: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "1fr",
     gap: 12,
   },
+
   radioCard: {
     display: "flex",
     alignItems: "flex-start",
-    gap: 10,
-    padding: "10px 12px",
-    borderRadius: 12,
+    gap: 12,
+    padding: "14px 14px",
+    borderRadius: 14,
     border: "1px solid #dbe3f0",
     background: "#fff",
     cursor: "pointer",
     minWidth: 0,
+    width: "100%",
   },
+
   radioCardChecked: {
     borderColor: "#c7d2fe",
-    background: "#eef2ff",
+    background: "linear-gradient(135deg, #eef2ff, #f8faff)",
     boxShadow: "inset 0 0 0 1px rgba(99,102,241,0.08)",
   },
+
+  radioContent: {
+    minWidth: 0,
+    flex: 1,
+  },
+
   radioTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 800,
     color: "#0f172a",
     marginBottom: 4,
+    whiteSpace: "nowrap",
   },
+
   radioHelp: {
     fontSize: 12,
     color: "#64748b",
-    lineHeight: 1.4,
+    lineHeight: 1.45,
+    whiteSpace: "normal",
+    overflowWrap: "break-word",
+    wordBreak: "break-word",
   },
 };
