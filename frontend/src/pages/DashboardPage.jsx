@@ -167,57 +167,57 @@ export default function DashboardPage({
         )}
       </section>
 
-      <div className="projects-grid">
-        <section className="page-card projects-left">
-          <div className="projects-panel-title">Project Directory</div>
+      <section className="page-card">
+        <div className="projects-panel-title">Project Directory</div>
 
-          {loading && <div className="info-box">Loading projects…</div>}
+        {loading && <div className="info-box">Loading projects…</div>}
 
-          {!!err && <div className="error-box">Error: {err}</div>}
+        {!!err && <div className="error-box">Error: {err}</div>}
 
-          {!loading && !err && projects.length > 0 && (
-            <div className="project-grid">
-              {projects.map((p) => (
-                <ProjectCard
-                  key={p.project_id}
-                  project={p}
-                  onOpen={() => onOpenProject?.(p.project_id)}
-                />
-              ))}
-            </div>
-          )}
-
-          {!loading && !err && projects.length === 0 && (
-            <div className="info-box">No projects found.</div>
-          )}
-        </section>
-
-        <section className="page-card projects-right">
-          <div className="projects-info-stack">
-            <div className="projects-info-card projects-highlight-card">
-              <div className="projects-info-title">Setup Overview</div>
-              <p style={{ margin: 0 }}>
-                Configure the default generation profile for your selected
-                project. These settings will be reused when you open Generate
-                Tests.
-              </p>
-            </div>
-
-            <div className="projects-info-card">
-              <div className="projects-info-title">Generation Setup</div>
-              <p className="muted" style={{ marginTop: 0 }}>
-                Choose the default environment, auth profile, coverage scope,
-                and generation mode.
-              </p>
-
-              <GenerationOptions
-                options={generatorSettings}
-                onChange={onChangeGeneratorSettings}
+        {!loading && !err && projects.length > 0 && (
+          <div className="project-grid">
+            {projects.map((p) => (
+              <ProjectCard
+                key={p.project_id}
+                project={p}
+                onOpen={() => onOpenProject?.(p.project_id)}
               />
-            </div>
+            ))}
           </div>
-        </section>
-      </div>
+        )}
+
+        {!loading && !err && projects.length === 0 && (
+          <div className="info-box">No projects found.</div>
+        )}
+      </section>
+
+      <section className="page-card">
+        <div className="projects-info-stack">
+          <div className="projects-info-card projects-highlight-card">
+            <div className="projects-info-title">
+              Project Generation Defaults
+            </div>
+            <p style={{ margin: 0 }}>
+              Set the default test types, spec source, and generation guidance
+              for this project. These settings will be used later inside the
+              Generate Tests tab.
+            </p>
+          </div>
+
+          <div className="projects-info-card">
+            <div className="projects-info-title">Generation Setup</div>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Configure the default environment, auth profile, coverage scope,
+              spec URL, and generation guidance for the selected project.
+            </p>
+
+            <GenerationOptions
+              options={generatorSettings}
+              onChange={onChangeGeneratorSettings}
+            />
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

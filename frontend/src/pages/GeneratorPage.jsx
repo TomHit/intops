@@ -358,44 +358,48 @@ export default function GeneratorPage({ projectId, onBack, options }) {
         .gen-dot:nth-child(4) { animation-delay: 0.36s; }
         .gen-dot:nth-child(5) { animation-delay: 0.48s; }
 
-        @media (max-width: 1080px) {
-          .toolbar-right {
-            justify-content: flex-start !important;
+        @media (max-width: 1220px) {
+          .generator-main-grid {
+            grid-template-columns: 1fr !important;
           }
 
-          .workspace-toolbar {
-            grid-template-columns: 1fr !important;
+          .generator-left-pane {
+            position: relative !important;
+            top: 0 !important;
+            max-height: none !important;
+          }
+
+          .generator-left-body {
+            max-height: none !important;
           }
         }
 
-        @media (max-width: 780px) {
+        @media (max-width: 860px) {
           .results-header {
             flex-direction: column !important;
             align-items: stretch !important;
           }
 
-          .toolbar-center,
-          .toolbar-right {
+          .results-top-actions {
             width: 100%;
+            justify-content: flex-start !important;
           }
 
-          .toolbar-center > *,
-          .toolbar-right > * {
+          .explorer-footer-top {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+
+          .explorer-footer-actions {
             width: 100%;
+            justify-content: stretch !important;
+          }
+
+          .explorer-footer-actions > button {
+            flex: 1 1 auto;
           }
         }
       `}</style>
-
-      <div style={styles.header}>
-        <div>
-          <div style={styles.eyebrow}>AI test generation workspace</div>
-          <h1 style={styles.heading}>Generate Tests</h1>
-          <p style={styles.subtitle}>
-            Select endpoints and generate test cases using the defaults
-            configured on the Projects page.
-          </p>
-        </div>
-      </div>
 
       {!projectId && (
         <div style={styles.notice}>
@@ -404,15 +408,84 @@ export default function GeneratorPage({ projectId, onBack, options }) {
         </div>
       )}
 
-      <section style={styles.workspaceShell}>
-        <div className="workspace-toolbar" style={styles.toolbar}>
-          <div style={styles.toolbarLeft}>
-            <div style={styles.toolbarTitle}>Endpoint Explorer</div>
+      <section className="generator-main-grid" style={styles.mainGrid}>
+        <aside className="generator-left-pane" style={styles.leftPane}>
+          <div style={styles.leftPaneHeader}>
+            <div>
+              <div style={styles.leftEyebrow}>Explorer</div>
+              <div style={styles.leftTitle}>Endpoint Explorer</div>
+              <div style={styles.leftSubtle}>
+                Browse, filter, and select endpoints for generation.
+              </div>
+            </div>
           </div>
 
-          <div className="toolbar-center" style={styles.toolbarCenter}>
-            <div style={styles.countBadge}>
-              {selectedCount} endpoint{selectedCount === 1 ? "" : "s"} selected
+          <div style={styles.projectDefaultsBar}>
+            <span style={styles.defaultChip}>
+              <strong>Env</strong> {options.env || "-"}
+            </span>
+            <span style={styles.defaultChip}>
+              <strong>Auth</strong> {options.auth_profile || "-"}
+            </span>
+            <span style={styles.defaultChip}>
+              <strong>Mode</strong> {options.generation_mode || "balanced"}
+            </span>
+            <span style={styles.defaultChip}>
+              <strong>AI</strong> {options.ai ? "On" : "Off"}
+            </span>
+          </div>
+
+          <div className="generator-left-body" style={styles.explorerBody}>
+            {endpointsLoading && (
+              <div style={styles.infoBox}>Loading endpoints...</div>
+            )}
+
+            {!!endpointsErr && (
+              <div style={{ ...styles.infoBox, ...styles.errorInfo }}>
+                Error: {endpointsErr}
+              </div>
+            )}
+
+            {!endpointsLoading && !endpointsErr && projectId && (
+              <EndpointSelector
+                endpoints={endpoints}
+                selection={selection}
+                onChange={setSelection}
+              />
+            )}
+          </div>
+
+          <div style={styles.explorerFooter}>
+            <div
+              className="explorer-footer-top"
+              style={styles.explorerFooterTop}
+            >
+              <div style={styles.countBadge}>
+                {selectedCount} endpoint{selectedCount === 1 ? "" : "s"}{" "}
+                selected
+              </div>
+
+              <div
+                className="explorer-footer-actions"
+                style={styles.explorerFooterActions}
+              >
+                <button
+                  type="button"
+                  onClick={() => onBack?.()}
+                  style={styles.secondaryBtn}
+                >
+                  Back
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => loadEndpoints(options.spec_source || "")}
+                  disabled={endpointsLoading || !projectId}
+                  style={styles.secondaryBtn}
+                >
+                  Reload
+                </button>
+              </div>
             </div>
 
             <button
@@ -439,178 +512,133 @@ export default function GeneratorPage({ projectId, onBack, options }) {
               )}
             </button>
           </div>
+        </aside>
 
-          <div className="toolbar-right" style={styles.toolbarRight}>
-            <div style={styles.modeBadge}>
-              {String(
-                run.generation_mode || options.generation_mode,
-              ).toUpperCase()}
-            </div>
-
-            <button
-              type="button"
-              onClick={exportJson}
-              disabled={!run.testplan}
-              style={styles.secondaryBtn}
-            >
-              Export JSON
-            </button>
-
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={!tableRows.length}
-              style={styles.secondaryBtn}
-            >
-              CSV
-            </button>
-          </div>
-        </div>
-
-        <div style={styles.projectDefaultsBar}>
-          <span>
-            <strong>Env:</strong> {options.env || "-"}
-          </span>
-          <span>
-            <strong>Auth:</strong> {options.auth_profile || "-"}
-          </span>
-          <span>
-            <strong>Mode:</strong> {options.generation_mode || "balanced"}
-          </span>
-          <span>
-            <strong>AI:</strong> {options.ai ? "On" : "Off"}
-          </span>
-        </div>
-
-        <div className="workspace-body" style={styles.workspaceBody}>
-          <aside style={styles.explorerPane}>
-            <div style={styles.explorerHeader}>
-              <div style={styles.explorerSubtle}>Filters</div>
-
-              <div style={styles.inlineBtns}>
-                <button
-                  type="button"
-                  onClick={() => onBack?.()}
-                  style={styles.secondaryBtn}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => loadEndpoints(options.spec_source || "")}
-                  disabled={endpointsLoading || !projectId}
-                  style={styles.secondaryBtn}
-                >
-                  Reload
-                </button>
+        <section style={styles.rightPane}>
+          <div className="results-header" style={styles.resultsHeader}>
+            <div>
+              <div style={styles.panelTitle}>Results</div>
+              <div style={styles.panelSubtle}>
+                Generated output appears here. Open any row for full detail.
               </div>
             </div>
 
-            {endpointsLoading && (
-              <div style={styles.infoBox}>Loading endpoints...</div>
-            )}
+            <div
+              className="results-top-actions"
+              style={styles.resultsTopActions}
+            >
+              <div style={styles.modeBadge}>
+                {String(
+                  run.generation_mode || options.generation_mode || "balanced",
+                ).toUpperCase()}
+              </div>
 
-            {!!endpointsErr && (
-              <div style={{ ...styles.infoBox, ...styles.errorInfo }}>
-                Error: {endpointsErr}
+              <button
+                type="button"
+                onClick={exportJson}
+                disabled={!run.testplan}
+                style={styles.secondaryBtn}
+              >
+                Export JSON
+              </button>
+
+              <button
+                type="button"
+                onClick={exportCsv}
+                disabled={!tableRows.length}
+                style={styles.secondaryBtn}
+              >
+                CSV
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.resultsInner}>
+            <div style={styles.tabRow}>
+              <button
+                type="button"
+                onClick={() => setActiveTab("table")}
+                style={{
+                  ...styles.tabBtn,
+                  ...(activeTab === "table" ? styles.tabBtnActive : {}),
+                }}
+              >
+                Table View
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("json")}
+                disabled={!run.testplan}
+                style={{
+                  ...styles.tabBtn,
+                  ...(activeTab === "json" ? styles.tabBtnActive : {}),
+                  opacity: !run.testplan ? 0.6 : 1,
+                }}
+              >
+                JSON View
+              </button>
+            </div>
+
+            {run.status === "done" && (
+              <div style={{ marginBottom: 18 }}>
+                <ResultsSummary
+                  rows={tableRows}
+                  report={run.report}
+                  testplan={run.testplan}
+                />
               </div>
             )}
 
-            {!endpointsLoading && !endpointsErr && projectId && (
-              <EndpointSelector
-                endpoints={endpoints}
-                selection={selection}
-                onChange={setSelection}
-              />
-            )}
-          </aside>
-        </div>
-      </section>
-
-      <section style={styles.resultsSection}>
-        <div className="results-header" style={styles.resultsHeader}>
-          <div>
-            <div style={styles.panelTitle}>Results</div>
-            <div style={styles.panelSubtle}>
-              Compact preview for scanning. Open any row for full detail.
-            </div>
-          </div>
-
-          <div style={styles.tabRow}>
-            <button
-              type="button"
-              onClick={() => setActiveTab("table")}
-              style={{
-                ...styles.tabBtn,
-                ...(activeTab === "table" ? styles.tabBtnActive : {}),
-              }}
-            >
-              Table View
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("json")}
-              disabled={!run.testplan}
-              style={{
-                ...styles.tabBtn,
-                ...(activeTab === "json" ? styles.tabBtnActive : {}),
-                opacity: !run.testplan ? 0.6 : 1,
-              }}
-            >
-              JSON View
-            </button>
-          </div>
-        </div>
-
-        {run.status === "done" && (
-          <div style={{ marginBottom: 18 }}>
-            <ResultsSummary
-              rows={tableRows}
-              report={run.report}
-              testplan={run.testplan}
-            />
-          </div>
-        )}
-
-        {run.status === "running" && (
-          <div style={styles.resultsProgress}>
-            <div style={styles.resultsProgressTop}>
-              <span>{runningStepLabel || "Building test cases now..."}</span>
-              <div style={styles.dotGroup}>
-                <span className="gen-dot" />
-                <span className="gen-dot" />
-                <span className="gen-dot" />
-                <span className="gen-dot" />
-                <span className="gen-dot" />
+            {run.status === "running" && (
+              <div style={styles.resultsProgress}>
+                <div style={styles.resultsProgressTop}>
+                  <span>
+                    {runningStepLabel || "Building test cases now..."}
+                  </span>
+                  <div style={styles.dotGroup}>
+                    <span className="gen-dot" />
+                    <span className="gen-dot" />
+                    <span className="gen-dot" />
+                    <span className="gen-dot" />
+                    <span className="gen-dot" />
+                  </div>
+                </div>
+                <div style={styles.resultsProgressBarTrack}>
+                  <div style={styles.resultsProgressBarFill} />
+                </div>
               </div>
-            </div>
-            <div style={styles.resultsProgressBarTrack}>
-              <div style={styles.resultsProgressBarFill} />
+            )}
+
+            {run.status === "error" && (
+              <div
+                style={{
+                  ...styles.infoBox,
+                  ...styles.errorInfo,
+                  marginBottom: 16,
+                }}
+              >
+                {run.error?.message ||
+                  "Something went wrong during generation."}
+              </div>
+            )}
+
+            <div style={styles.resultsBody}>
+              {activeTab === "table" ? (
+                <TestCaseTable
+                  rows={tableRows}
+                  loading={run.status === "running"}
+                  onRowClick={(row) => setDrawer({ open: true, row })}
+                />
+              ) : (
+                <pre style={styles.jsonBox}>
+                  {run.testplan
+                    ? JSON.stringify(run.testplan, null, 2)
+                    : "No output yet."}
+                </pre>
+              )}
             </div>
           </div>
-        )}
-
-        {run.status === "error" && (
-          <div
-            style={{ ...styles.infoBox, ...styles.errorInfo, marginBottom: 16 }}
-          >
-            {run.error?.message || "Something went wrong during generation."}
-          </div>
-        )}
-
-        {activeTab === "table" ? (
-          <TestCaseTable
-            rows={tableRows}
-            loading={run.status === "running"}
-            onRowClick={(row) => setDrawer({ open: true, row })}
-          />
-        ) : (
-          <pre style={styles.jsonBox}>
-            {run.testplan
-              ? JSON.stringify(run.testplan, null, 2)
-              : "No output yet."}
-          </pre>
-        )}
+        </section>
       </section>
 
       <TestCaseDrawer
@@ -625,46 +653,127 @@ export default function GeneratorPage({ projectId, onBack, options }) {
 const styles = {
   page: {
     display: "grid",
-    gap: 18,
-    padding: "28px 0 40px",
+    gap: 12,
+    padding: "0 0 32px",
     width: "100%",
     minWidth: 0,
-    maxWidth: "none",
     margin: 0,
     background: "#f8fafc",
   },
 
-  header: {
+  notice: {
+    padding: 16,
+    borderRadius: 16,
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    color: "#9a3412",
+  },
+
+  mainGrid: {
+    display: "grid",
+    gridTemplateColumns: "420px minmax(0, 1fr)",
+    gap: 20,
+    alignItems: "start",
+    width: "100%",
+    minWidth: 0,
+  },
+
+  leftPane: {
+    minWidth: 0,
+    width: "100%",
+    border: "1px solid #e6eaf2",
+    borderRadius: 24,
+    background: "#fff",
+    boxShadow: "0 10px 32px rgba(15, 23, 42, 0.05)",
+    overflow: "hidden",
+    position: "sticky",
+    top: 0,
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    maxHeight: "100vh",
+  },
+
+  leftPaneHeader: {
+    padding: "18px 20px 14px",
+    borderBottom: "1px solid #eef2f7",
+    background: "#ffffff",
+  },
+
+  leftEyebrow: {
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "#6366f1",
+    marginBottom: 6,
+  },
+
+  leftTitle: {
+    fontSize: 22,
+    fontWeight: 900,
+    color: "#0f172a",
+    letterSpacing: "-0.02em",
+    lineHeight: 1.1,
+    marginBottom: 6,
+  },
+
+  leftSubtle: {
+    fontSize: 13,
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+
+  projectDefaultsBar: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "14px 20px",
+    borderBottom: "1px solid #eef2f7",
+    background: "#fafcff",
+  },
+
+  defaultChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 10px",
+    borderRadius: 999,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+  },
+
+  explorerBody: {
+    padding: 16,
+    minWidth: 0,
+    overflow: "auto",
+  },
+
+  explorerFooter: {
+    padding: 16,
+    borderTop: "1px solid #eef2f7",
+    background: "#ffffff",
+    display: "grid",
+    gap: 14,
+  },
+
+  explorerFooterTop: {
     display: "flex",
     justifyContent: "space-between",
-    gap: 20,
-    alignItems: "flex-start",
+    alignItems: "center",
+    gap: 12,
     flexWrap: "wrap",
   },
 
-  eyebrow: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#6366f1",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-
-  heading: {
-    margin: 0,
-    fontSize: 34,
-    lineHeight: 1.05,
-    color: "#0f172a",
-  },
-
-  subtitle: {
-    marginTop: 10,
-    marginBottom: 0,
-    color: "#64748b",
-    maxWidth: 720,
-    lineHeight: 1.5,
-    fontSize: 15,
+  explorerFooterActions: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
 
   countBadge: {
@@ -682,13 +791,14 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    padding: "12px 18px",
-    minWidth: 250,
+    width: "100%",
+    padding: "14px 18px",
     borderRadius: 16,
     border: "none",
     background: "linear-gradient(90deg, #8b5cf6 0%, #4f7cff 100%)",
     color: "#fff",
     fontWeight: 800,
+    fontSize: 16,
     cursor: "pointer",
     boxShadow: "0 14px 30px rgba(79, 70, 229, 0.18)",
     whiteSpace: "nowrap",
@@ -705,135 +815,6 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
-  modeBadge: {
-    padding: "10px 18px",
-    borderRadius: 18,
-    background: "#ffffff",
-    border: "1px solid #dbe3f0",
-    color: "#334155",
-    fontSize: 13,
-    fontWeight: 800,
-    whiteSpace: "nowrap",
-  },
-
-  notice: {
-    padding: 16,
-    borderRadius: 16,
-    background: "#fff7ed",
-    border: "1px solid #fed7aa",
-    color: "#9a3412",
-  },
-
-  workspaceShell: {
-    width: "100%",
-    minWidth: 0,
-    border: "1px solid #e6eaf2",
-    borderRadius: 24,
-    background: "#fff",
-    boxShadow: "0 10px 32px rgba(15, 23, 42, 0.05)",
-    overflow: "hidden",
-  },
-
-  toolbar: {
-    display: "grid",
-    gridTemplateColumns: "minmax(140px, 180px) minmax(0, 1fr) auto",
-    gap: 16,
-    alignItems: "center",
-    padding: "16px 20px",
-    borderBottom: "1px solid #eef2f7",
-    width: "100%",
-    minWidth: 0,
-  },
-
-  toolbarLeft: {
-    display: "flex",
-    alignItems: "center",
-    minWidth: 0,
-  },
-
-  toolbarCenter: {
-    display: "flex",
-    gap: 14,
-    alignItems: "center",
-    flexWrap: "wrap",
-    minWidth: 0,
-  },
-
-  toolbarRight: {
-    display: "flex",
-    gap: 12,
-    alignItems: "center",
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-  },
-
-  toolbarTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    color: "#0f172a",
-    whiteSpace: "nowrap",
-  },
-
-  projectDefaultsBar: {
-    display: "flex",
-    gap: 18,
-    flexWrap: "wrap",
-    padding: "12px 20px",
-    borderBottom: "1px solid #eef2f7",
-    background: "#f8fafc",
-    color: "#475569",
-    fontSize: 13,
-  },
-
-  workspaceBody: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    alignItems: "stretch",
-    width: "100%",
-    minWidth: 0,
-  },
-
-  explorerPane: {
-    padding: 20,
-    minWidth: 0,
-  },
-
-  explorerHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
-    marginBottom: 14,
-    flexWrap: "wrap",
-  },
-
-  explorerSubtle: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#334155",
-  },
-
-  panelTitle: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#0f172a",
-    marginBottom: 6,
-    lineHeight: 1.2,
-  },
-
-  panelSubtle: {
-    fontSize: 14,
-    color: "#64748b",
-    lineHeight: 1.5,
-    maxWidth: 620,
-  },
-
-  inlineBtns: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-
   infoBox: {
     padding: 14,
     borderRadius: 12,
@@ -848,20 +829,14 @@ const styles = {
     color: "#991b1b",
   },
 
-  dotGroup: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-  },
-
-  resultsSection: {
-    width: "100%",
+  rightPane: {
     minWidth: 0,
+    width: "100%",
     border: "1px solid #e6eaf2",
     borderRadius: 24,
-    padding: 20,
     background: "#fff",
     boxShadow: "0 10px 32px rgba(15, 23, 42, 0.05)",
+    overflow: "hidden",
   },
 
   resultsHeader: {
@@ -869,13 +844,55 @@ const styles = {
     justifyContent: "space-between",
     gap: 16,
     alignItems: "center",
-    marginBottom: 18,
+    padding: "20px 20px 16px",
+    borderBottom: "1px solid #eef2f7",
     flexWrap: "wrap",
+  },
+
+  resultsTopActions: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    flexWrap: "wrap",
+  },
+
+  panelTitle: {
+    fontSize: 22,
+    fontWeight: 900,
+    color: "#0f172a",
+    marginBottom: 6,
+    lineHeight: 1.15,
+  },
+
+  panelSubtle: {
+    fontSize: 14,
+    color: "#64748b",
+    lineHeight: 1.5,
+    maxWidth: 620,
+  },
+
+  modeBadge: {
+    padding: "10px 18px",
+    borderRadius: 18,
+    background: "#ffffff",
+    border: "1px solid #dbe3f0",
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+  },
+
+  resultsInner: {
+    padding: 20,
+    minWidth: 0,
   },
 
   tabRow: {
     display: "flex",
     gap: 10,
+    marginBottom: 18,
+    flexWrap: "wrap",
   },
 
   tabBtn: {
@@ -908,6 +925,12 @@ const styles = {
     marginBottom: 10,
   },
 
+  dotGroup: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  },
+
   resultsProgressBarTrack: {
     height: 6,
     borderRadius: 999,
@@ -920,6 +943,11 @@ const styles = {
     height: "100%",
     borderRadius: 999,
     background: "linear-gradient(90deg, #8b5cf6 0%, #60a5fa 100%)",
+  },
+
+  resultsBody: {
+    minWidth: 0,
+    width: "100%",
   },
 
   jsonBox: {

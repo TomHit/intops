@@ -14,7 +14,7 @@ function TogglePill({ checked, label, onChange }) {
         type="checkbox"
         checked={checked}
         onChange={onChange}
-        style={styles.hiddenCheckbox}
+        style={styles.hiddenInput}
       />
       <span
         style={{
@@ -25,6 +25,38 @@ function TogglePill({ checked, label, onChange }) {
         {checked ? "✓" : ""}
       </span>
       <span style={styles.pillText}>{label}</span>
+    </label>
+  );
+}
+
+function RadioCard({ checked, title, help, onChange }) {
+  return (
+    <label
+      style={{
+        ...styles.radioCard,
+        ...(checked ? styles.radioCardChecked : {}),
+      }}
+    >
+      <input
+        type="radio"
+        name="generation_mode"
+        checked={checked}
+        onChange={onChange}
+        style={styles.hiddenInput}
+      />
+      <span
+        style={{
+          ...styles.radioDot,
+          ...(checked ? styles.radioDotChecked : {}),
+        }}
+      >
+        <span style={styles.radioDotInner} />
+      </span>
+
+      <span style={styles.radioContent}>
+        <span style={styles.radioTitle}>{title}</span>
+        <span style={styles.radioHelp}>{help}</span>
+      </span>
     </label>
   );
 }
@@ -52,139 +84,104 @@ export default function GenerationOptions({ options, onChange }) {
         settings will be reused when you open Generate Tests.
       </div>
 
-      <div style={styles.topGrid}>
-        <section style={styles.sectionCard}>
-          <div style={styles.sectionHead}>
-            <div>
-              <div style={styles.sectionEyebrow}>Coverage</div>
-              <div style={styles.sectionTitle}>Test Types</div>
-            </div>
+      <section style={styles.sectionCard}>
+        <div style={styles.sectionHead}>
+          <div>
+            <div style={styles.sectionEyebrow}>Coverage</div>
+            <div style={styles.sectionTitle}>Test Types</div>
+          </div>
+        </div>
+
+        <div style={styles.pillGrid}>
+          {TEST_TYPES.map((k) => (
+            <TogglePill
+              key={k}
+              label={k}
+              checked={(options.include || []).includes(k)}
+              onChange={() => toggleInclude(k)}
+            />
+          ))}
+        </div>
+
+        <div style={styles.inlineRow}>
+          <label style={styles.aiToggle}>
+            <input
+              type="checkbox"
+              checked={!!options.ai}
+              onChange={(e) => onChange({ ...options, ai: e.target.checked })}
+            />
+            <span>Use AI enrichment</span>
+          </label>
+
+          <button
+            type="button"
+            onClick={selectRecommended}
+            style={styles.smallBtn}
+          >
+            Use Recommended
+          </button>
+        </div>
+
+        <div style={styles.help}>
+          Best starting point for manual QA: contract + schema with balanced
+          generation.
+        </div>
+      </section>
+
+      <section style={styles.sectionCard}>
+        <div style={styles.sectionHead}>
+          <div>
+            <div style={styles.sectionEyebrow}>Runtime</div>
+            <div style={styles.sectionTitle}>Execution Defaults</div>
+          </div>
+        </div>
+
+        <div style={styles.fieldStack}>
+          <div>
+            <div style={styles.label}>Environment</div>
+            <input
+              value={options.env || ""}
+              onChange={(e) => onChange({ ...options, env: e.target.value })}
+              placeholder="staging"
+              style={styles.input}
+            />
           </div>
 
-          <div style={styles.pillGrid}>
-            {TEST_TYPES.map((k) => (
-              <TogglePill
-                key={k}
-                label={k}
-                checked={(options.include || []).includes(k)}
-                onChange={() => toggleInclude(k)}
-              />
-            ))}
+          <div>
+            <div style={styles.label}>Auth Profile</div>
+            <input
+              value={options.auth_profile || ""}
+              onChange={(e) =>
+                onChange({ ...options, auth_profile: e.target.value })
+              }
+              placeholder="device"
+              style={styles.input}
+            />
           </div>
+        </div>
 
-          <div style={styles.inlineRow}>
-            <label style={styles.aiToggle}>
-              <input
-                type="checkbox"
-                checked={!!options.ai}
-                onChange={(e) => onChange({ ...options, ai: e.target.checked })}
-              />
-              <span>Use AI enrichment</span>
-            </label>
+        <div style={styles.modeHeaderRow}>
+          <div style={styles.label}>Generation Mode</div>
+        </div>
 
-            <button
-              type="button"
-              onClick={selectRecommended}
-              style={styles.smallBtn}
-            >
-              Use Recommended
-            </button>
-          </div>
+        <div style={styles.modeRow}>
+          <RadioCard
+            checked={(options.generation_mode || "balanced") === "balanced"}
+            title="Balanced"
+            help="Covers ready and partially complete endpoints for practical QA output."
+            onChange={() =>
+              onChange({ ...options, generation_mode: "balanced" })
+            }
+          />
 
-          <div style={styles.help}>
-            Best starting point for manual QA: contract + schema with balanced
-            generation.
-          </div>
-        </section>
-
-        <section style={styles.sectionCard}>
-          <div style={styles.sectionHead}>
-            <div>
-              <div style={styles.sectionEyebrow}>Runtime</div>
-              <div style={styles.sectionTitle}>Execution Defaults</div>
-            </div>
-          </div>
-
-          <div style={styles.fieldStack}>
-            <div>
-              <div style={styles.label}>Environment</div>
-              <input
-                value={options.env || ""}
-                onChange={(e) => onChange({ ...options, env: e.target.value })}
-                placeholder="staging"
-                style={styles.input}
-              />
-            </div>
-
-            <div>
-              <div style={styles.label}>Auth Profile</div>
-              <input
-                value={options.auth_profile || ""}
-                onChange={(e) =>
-                  onChange({ ...options, auth_profile: e.target.value })
-                }
-                placeholder="device"
-                style={styles.input}
-              />
-            </div>
-          </div>
-
-          <div style={styles.modeHeaderRow}>
-            <div style={styles.label}>Generation Mode</div>
-          </div>
-
-          <div style={styles.modeRow}>
-            <label
-              style={{
-                ...styles.radioCard,
-                ...((options.generation_mode || "balanced") === "balanced"
-                  ? styles.radioCardChecked
-                  : {}),
-              }}
-            >
-              <input
-                type="radio"
-                name="generation_mode"
-                checked={(options.generation_mode || "balanced") === "balanced"}
-                onChange={() =>
-                  onChange({ ...options, generation_mode: "balanced" })
-                }
-              />
-              <div style={styles.radioContent}>
-                <div style={styles.radioTitle}>Balanced</div>
-                <div style={styles.radioHelp}>
-                  Covers ready and partially complete endpoints for practical QA
-                  output.
-                </div>
-              </div>
-            </label>
-
-            <label
-              style={{
-                ...styles.radioCard,
-                ...(options.generation_mode === "strict"
-                  ? styles.radioCardChecked
-                  : {}),
-              }}
-            >
-              <input
-                type="radio"
-                name="generation_mode"
-                checked={options.generation_mode === "strict"}
-                onChange={() =>
-                  onChange({ ...options, generation_mode: "strict" })
-                }
-              />
-              <div style={styles.radioContent}>
-                <div style={styles.radioTitle}>Strict</div>
-                <div style={styles.radioHelp}>
-                  Restricts generation to endpoints with stronger spec coverage.
-                </div>
-              </div>
-            </label>
-          </div>
-        </section>
-      </div>
+          <RadioCard
+            checked={options.generation_mode === "strict"}
+            title="Strict"
+            help="Restricts generation to endpoints with stronger spec coverage."
+            onChange={() => onChange({ ...options, generation_mode: "strict" })}
+          />
+        </div>
+      </section>
 
       <section style={styles.sectionCard}>
         <div style={styles.sectionHead}>
@@ -244,15 +241,6 @@ const styles = {
     lineHeight: 1.55,
   },
 
-  topGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(280px, 1fr) minmax(320px, 1.15fr)",
-    gap: 16,
-    alignItems: "start",
-    width: "100%",
-    minWidth: 0,
-  },
-
   sectionCard: {
     display: "grid",
     gap: 14,
@@ -261,6 +249,7 @@ const styles = {
     background: "linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%)",
     padding: 18,
     minWidth: 0,
+    width: "100%",
     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)",
   },
 
@@ -285,6 +274,7 @@ const styles = {
     fontWeight: 900,
     color: "#0f172a",
     letterSpacing: "-0.02em",
+    lineHeight: 1.1,
   },
 
   label: {
@@ -313,6 +303,7 @@ const styles = {
     fontWeight: 700,
     color: "#334155",
     minWidth: 0,
+    width: "100%",
   },
 
   pillChecked: {
@@ -331,8 +322,12 @@ const styles = {
     lineHeight: 1.2,
   },
 
-  hiddenCheckbox: {
-    display: "none",
+  hiddenInput: {
+    position: "absolute",
+    opacity: 0,
+    pointerEvents: "none",
+    width: 0,
+    height: 0,
   },
 
   checkDot: {
@@ -395,7 +390,7 @@ const styles = {
 
   fieldStack: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(160px, 1fr))",
+    gridTemplateColumns: "1fr 1fr",
     gap: 12,
   },
 
@@ -437,19 +432,22 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "1fr",
     gap: 12,
+    width: "100%",
   },
 
   radioCard: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 12,
-    padding: "14px 14px",
+    display: "grid",
+    gridTemplateColumns: "24px minmax(0, 1fr)",
+    alignItems: "start",
+    columnGap: 12,
+    padding: "14px",
     borderRadius: 14,
     border: "1px solid #dbe3f0",
     background: "#fff",
     cursor: "pointer",
     minWidth: 0,
     width: "100%",
+    boxSizing: "border-box",
   },
 
   radioCardChecked: {
@@ -458,25 +456,55 @@ const styles = {
     boxShadow: "inset 0 0 0 1px rgba(99,102,241,0.08)",
   },
 
+  radioDot: {
+    width: 22,
+    height: 22,
+    borderRadius: "50%",
+    border: "2px solid #94a3b8",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+    flexShrink: 0,
+    background: "#fff",
+  },
+
+  radioDotChecked: {
+    borderColor: "#2563eb",
+  },
+
+  radioDotInner: {
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    background: "#2563eb",
+  },
+
   radioContent: {
+    display: "grid",
+    gap: 4,
     minWidth: 0,
-    flex: 1,
+    width: "100%",
   },
 
   radioTitle: {
+    display: "block",
     fontSize: 15,
     fontWeight: 800,
     color: "#0f172a",
-    marginBottom: 4,
-    whiteSpace: "nowrap",
+    lineHeight: 1.3,
+    whiteSpace: "normal",
+    wordBreak: "break-word",
+    overflowWrap: "break-word",
   },
 
   radioHelp: {
+    display: "block",
     fontSize: 12,
     color: "#64748b",
-    lineHeight: 1.45,
+    lineHeight: 1.5,
     whiteSpace: "normal",
-    overflowWrap: "break-word",
     wordBreak: "break-word",
+    overflowWrap: "break-word",
   },
 };

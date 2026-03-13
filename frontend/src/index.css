@@ -1219,6 +1219,7 @@ textarea,
   display: flex;
   flex-direction: column;
   gap: 24px;
+  max-width: 1200px;
 }
 
 .projects-topbar {
@@ -1233,15 +1234,14 @@ textarea,
 }
 
 .projects-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(420px, 0.95fr);
+  display: flex;
+  flex-direction: column;
   gap: 24px;
-  align-items: start;
+  width: 100%;
 }
 
 .projects-left,
 .projects-right {
-  min-width: 0;
   width: 100%;
 }
 
