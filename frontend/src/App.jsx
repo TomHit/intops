@@ -3,15 +3,212 @@ import AppShell from "./components/layout/AppShell";
 import DashboardPage from "./pages/DashboardPage";
 import GeneratorPage from "./pages/GeneratorPage";
 import TestCasesPage from "./pages/TestCasesPage";
-function OverviewPage() {
+
+function WelcomePage({ onSelectMode }) {
   return (
     <div className="page-grid">
       <section className="page-card">
-        <h3>Organization Summary</h3>
+        <div style={{ marginBottom: 20 }}>
+          <div className="header-eyebrow" style={{ marginBottom: 10 }}>
+            API TestOps Onboarding
+          </div>
+          <h2 style={{ margin: 0, fontSize: 32 }}>
+            Who are you setting up for?
+          </h2>
+          <p className="muted" style={{ marginTop: 12 }}>
+            Choose how you want to use the platform. Organizations get team and
+            project mapping. Individual users can start directly with projects.
+          </p>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 20,
+          }}
+        >
+          <div className="project-card">
+            <div className="project-card-title">Organization</div>
+            <div className="project-card-subtitle">
+              Create an organization, add teams, and assign projects by team.
+            </div>
+
+            <div className="project-card-ai-note">
+              Best for QA teams, engineering groups, and companies managing many
+              APIs together.
+            </div>
+
+            <div className="project-card-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => onSelectMode("organization")}
+              >
+                Continue as Organization
+              </button>
+            </div>
+          </div>
+
+          <div className="project-card">
+            <div className="project-card-title">Individual</div>
+            <div className="project-card-subtitle">
+              Skip organization and team setup and start directly with projects.
+            </div>
+
+            <div className="project-card-ai-note">
+              Best for solo developers, freelancers, and personal API test case
+              generation.
+            </div>
+
+            <div className="project-card-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => onSelectMode("individual")}
+              >
+                Continue as Individual
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="page-card">
+        <h3>How the setup works</h3>
+        <ul className="simple-list">
+          <li>
+            Organization → create organization → add team → create project
+          </li>
+          <li>Individual → skip team setup → create project directly</li>
+          <li>Both flows later reach the same Generate Tests workspace</li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function CreateOrganizationPage({ onCreateOrganization, onBack }) {
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+  });
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    if (!form.name.trim()) {
+      alert("Organization name is required.");
+      return;
+    }
+
+    onCreateOrganization({
+      id: `org_${Date.now()}`,
+      name: form.name.trim(),
+      description:
+        form.description.trim() ||
+        "New organization created in API TestOps workspace.",
+    });
+  }
+
+  return (
+    <div className="page-grid">
+      <section className="page-card">
+        <div className="section-head">
+          <div>
+            <h3 style={{ margin: 0 }}>Create Organization</h3>
+            <p className="muted" style={{ marginTop: 6 }}>
+              Set up your workspace before adding teams and projects.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div
+            style={{
+              display: "grid",
+              gap: 16,
+            }}
+          >
+            <div>
+              <label className="projects-label">Organization Name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Enter organization name"
+              />
+            </div>
+
+            <div>
+              <label className="projects-label">Description</label>
+              <textarea
+                value={form.description}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, description: e.target.value }))
+                }
+                placeholder="Describe your organization"
+              />
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              justifyContent: "flex-end",
+              marginTop: 20,
+              flexWrap: "wrap",
+            }}
+          >
+            <button type="button" className="secondary-btn" onClick={onBack}>
+              Back
+            </button>
+            <button type="submit" className="primary-btn">
+              Create Organization
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="page-card">
+        <h3>What happens next</h3>
+        <ul className="simple-list">
+          <li>You can add teams for access control</li>
+          <li>Projects can later be assigned to teams</li>
+          <li>Spec source can be linked per project</li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function OverviewPage({ workspaceMode, organization }) {
+  const title =
+    workspaceMode === "organization"
+      ? organization?.name || "Organization"
+      : "Personal Workspace";
+
+  return (
+    <div className="page-grid">
+      <section className="page-card">
+        <h3>
+          {workspaceMode === "organization"
+            ? "Organization Summary"
+            : "Personal Summary"}
+        </h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Workspace: {title}
+        </p>
+
         <div className="stats-grid">
           <div className="stat-box">
-            <span>Teams</span>
-            <strong>3</strong>
+            <span>
+              {workspaceMode === "organization" ? "Teams" : "Projects"}
+            </span>
+            <strong>{workspaceMode === "organization" ? 3 : 1}</strong>
           </div>
           <div className="stat-box">
             <span>Projects</span>
@@ -518,10 +715,17 @@ function ReportsPage({ projectId }) {
   );
 }
 
-function SettingsPage() {
+function SettingsPage({ workspaceMode, organization }) {
   return (
     <div className="page-card">
       <h3>Settings</h3>
+      <p className="muted">Workspace Mode: {workspaceMode || "Not selected"}</p>
+      <p className="muted">
+        Organization:{" "}
+        {workspaceMode === "organization"
+          ? organization?.name || "Not created yet"
+          : "Not applicable for individual workspace"}
+      </p>
       <p className="muted">
         Organization, default environment, and AI generation settings will go
         here.
@@ -531,9 +735,12 @@ function SettingsPage() {
 }
 
 export default function App() {
-  const [activeNav, setActiveNav] = useState("overview");
+  const [activeNav, setActiveNav] = useState("welcome");
   const [selectedProject, setSelectedProject] = useState(null);
   const [generatedRun, setGeneratedRun] = useState(null);
+
+  const [workspaceMode, setWorkspaceMode] = useState(null);
+  const [organization, setOrganization] = useState(null);
 
   const [generatorSettings, setGeneratorSettings] = useState({
     include: ["contract", "schema"],
@@ -545,8 +752,36 @@ export default function App() {
     generation_mode: "balanced",
   });
 
+  function handleSelectMode(mode) {
+    setWorkspaceMode(mode);
+
+    if (mode === "organization") {
+      setActiveNav("createOrganization");
+      return;
+    }
+
+    setOrganization(null);
+    setActiveNav("projects");
+  }
+
+  function handleCreateOrganization(org) {
+    setOrganization(org);
+    setActiveNav("teams");
+  }
+
   const page = useMemo(() => {
     switch (activeNav) {
+      case "welcome":
+        return <WelcomePage onSelectMode={handleSelectMode} />;
+
+      case "createOrganization":
+        return (
+          <CreateOrganizationPage
+            onCreateOrganization={handleCreateOrganization}
+            onBack={() => setActiveNav("welcome")}
+          />
+        );
+
       case "teams":
         return <TeamsPage />;
 
@@ -589,16 +824,38 @@ export default function App() {
         return <ReportsPage projectId={selectedProject} />;
 
       case "settings":
-        return <SettingsPage />;
+        return (
+          <SettingsPage
+            workspaceMode={workspaceMode}
+            organization={organization}
+          />
+        );
 
       case "overview":
       default:
-        return <OverviewPage />;
+        return (
+          <OverviewPage
+            workspaceMode={workspaceMode}
+            organization={organization}
+          />
+        );
     }
-  }, [activeNav, selectedProject, generatorSettings, generatedRun]);
+  }, [
+    activeNav,
+    selectedProject,
+    generatedRun,
+    generatorSettings,
+    workspaceMode,
+    organization,
+  ]);
 
   return (
-    <AppShell activeNav={activeNav} onChangeNav={setActiveNav}>
+    <AppShell
+      activeNav={activeNav}
+      onChangeNav={setActiveNav}
+      workspaceMode={workspaceMode}
+      organization={organization}
+    >
       {page}
     </AppShell>
   );

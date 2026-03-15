@@ -1,7 +1,37 @@
 import React from "react";
 import { NAV_ITEMS } from "../../utils/navigation";
 
-export default function Sidebar({ activeNav, onChange }) {
+export default function Sidebar({
+  activeNav,
+  onChange,
+  workspaceMode,
+  organization,
+}) {
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (workspaceMode !== "organization" && item.key === "teams") {
+      return false;
+    }
+
+    if (workspaceMode !== "organization" && item.key === "overview") {
+      return false;
+    }
+
+    return true;
+  });
+
+  const workspaceLabel =
+    workspaceMode === "organization" ? "Organization" : "Individual Workspace";
+
+  const workspaceName =
+    workspaceMode === "organization"
+      ? organization?.name || "My Organization"
+      : "Personal Workspace";
+
+  const workspaceMeta =
+    workspaceMode === "organization"
+      ? "Teams, projects, and shared API ownership"
+      : "Projects and test generation for a single user";
+
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
@@ -13,15 +43,15 @@ export default function Sidebar({ activeNav, onChange }) {
       </div>
 
       <div className="sidebar-org-card">
-        <div className="sidebar-section-label">Organization</div>
-        <div className="sidebar-org-name">XauTrendLab</div>
-        <div className="sidebar-org-meta">3 teams • 4 projects</div>
+        <div className="sidebar-section-label">{workspaceLabel}</div>
+        <div className="sidebar-org-name">{workspaceName}</div>
+        <div className="sidebar-org-meta">{workspaceMeta}</div>
       </div>
 
       <nav className="sidebar-nav">
         <div className="sidebar-section-label">Workspace</div>
 
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = activeNav === item.key;
           const className = [
             "sidebar-nav-item",
