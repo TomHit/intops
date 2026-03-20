@@ -12,6 +12,16 @@ const RUNNING_STEPS = [
   "Preparing final preview",
 ];
 
+const DEFAULT_OPTIONS = {
+  env: "staging",
+  auth_profile: "",
+  include: ["contract", "schema"],
+  ai: false,
+  generation_mode: "balanced",
+  spec_source: "",
+  guidance: "",
+};
+
 function safeJsonParse(text) {
   try {
     return text ? JSON.parse(text) : null;
@@ -98,14 +108,49 @@ function buildCsvFromTable(rows) {
   return lines.join("\n");
 }
 
+function DetailList({ items, ordered = false }) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return <div style={styles.detailMuted}>-</div>;
+  }
+
+  const Tag = ordered ? "ol" : "ul";
+
+  return (
+    <Tag style={styles.detailList}>
+      {items.map((item, idx) => (
+        <li key={idx}>{item}</li>
+      ))}
+    </Tag>
+  );
+}
+
+function prettyJson(value) {
+  if (value === undefined || value === null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export default function GeneratorPage({
   projectId,
+  selectedProjectId,
   onBack,
   onViewTestCases,
   onSaveGeneratedRun,
   generatedRun,
   options,
+  generatorSettings,
+  activeSection = "generate",
 }) {
+  const resolvedProjectId = projectId || selectedProjectId || "";
+  const resolvedOptions = {
+    ...DEFAULT_OPTIONS,
+    ...(options || {}),
+    ...(generatorSettings || {}),
+  };
+
   const [endpointsLoading, setEndpointsLoading] = useState(true);
   const [endpointsErr, setEndpointsErr] = useState("");
   const [endpoints, setEndpoints] = useState([]);
@@ -131,11 +176,18 @@ export default function GeneratorPage({
   );
 
   const [runningStepIndex, setRunningStepIndex] = useState(0);
+  const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const tableRows = useMemo(
     () => deriveTableRows(run.testplan),
     [run.testplan],
   );
+
+  const selectedCase = useMemo(() => {
+    if (!tableRows.length) return null;
+    return tableRows.find((row) => row.id === selectedCaseId) || null;
+  }, [tableRows, selectedCaseId]);
 
   const selectedCount = (selection.selected_endpoint_ids || []).length;
   const runningStepLabel =
@@ -148,6 +200,19 @@ export default function GeneratorPage({
       setRun(generatedRun);
     }
   }, [generatedRun]);
+
+  useEffect(() => {
+    if (!tableRows.length) {
+      setSelectedCaseId("");
+      setIsPreviewOpen(false);
+      return;
+    }
+
+    if (selectedCaseId && !tableRows.some((row) => row.id === selectedCaseId)) {
+      setSelectedCaseId("");
+      setIsPreviewOpen(false);
+    }
+  }, [tableRows, selectedCaseId]);
 
   useEffect(() => {
     if (run.status !== "running") {
@@ -163,7 +228,7 @@ export default function GeneratorPage({
   }, [run.status]);
 
   async function loadEndpoints(specSource = "") {
-    if (!projectId) {
+    if (!resolvedProjectId) {
       setEndpoints([]);
       setEndpointsLoading(false);
       return;
@@ -173,7 +238,7 @@ export default function GeneratorPage({
     setEndpointsErr("");
 
     try {
-      let url = `/api/projects/${encodeURIComponent(projectId)}/endpoints`;
+      let url = `/api/projects/${encodeURIComponent(resolvedProjectId)}/endpoints`;
       if (specSource) {
         url += `?spec_source=${encodeURIComponent(specSource)}`;
       }
@@ -201,14 +266,14 @@ export default function GeneratorPage({
   }
 
   useEffect(() => {
-    loadEndpoints(options?.spec_source || "");
+    loadEndpoints(resolvedOptions?.spec_source || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, options?.spec_source]);
+  }, [resolvedProjectId, resolvedOptions?.spec_source]);
 
   async function generate() {
     const selected = selection.selected_endpoint_ids;
 
-    if (!projectId) {
+    if (!resolvedProjectId) {
       alert("Select a project first.");
       return;
     }
@@ -239,15 +304,15 @@ export default function GeneratorPage({
       }));
 
     const payload = {
-      project_id: projectId,
-      env: options.env,
-      auth_profile: options.auth_profile,
-      include: options.include,
-      guidance: options.guidance,
+      project_id: resolvedProjectId,
+      env: resolvedOptions.env,
+      auth_profile: resolvedOptions.auth_profile,
+      include: resolvedOptions.include,
+      guidance: resolvedOptions.guidance,
       endpoints: endpointRefs,
-      ai: !!options.ai,
-      spec_source: options.spec_source || "",
-      generation_mode: options.generation_mode || "balanced",
+      ai: !!resolvedOptions.ai,
+      spec_source: resolvedOptions.spec_source || "",
+      generation_mode: resolvedOptions.generation_mode || "balanced",
     };
 
     try {
@@ -296,6 +361,7 @@ export default function GeneratorPage({
         testplan: data.testplan || null,
         report: data.report || null,
       };
+
       setRun(nextRun);
 
       if (onSaveGeneratedRun) {
@@ -342,6 +408,8 @@ export default function GeneratorPage({
     downloadText("test_cases.csv", csv, "text/csv");
   }
 
+  const isTestCasesSection = activeSection === "testCases";
+
   return (
     <div style={styles.page}>
       <style>{`
@@ -349,21 +417,25 @@ export default function GeneratorPage({
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
-        @media (max-width: 860px) {
-          .strict-summary-grid {
-            grid-template-columns: 1fr 1fr !important;
-          }
-        }
-
-        @media (max-width: 560px) {
-          .strict-summary-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
 
         @keyframes dotPulse {
           0%, 100% { opacity: 0.35; transform: scale(0.9); }
           50% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes previewSlideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0.92;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+
+        @keyframes overlayFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
 
         .gen-spinner {
@@ -404,8 +476,6 @@ export default function GeneratorPage({
           .generator-left-body {
             max-height: none !important;
           }
-
-          
         }
 
         @media (max-width: 860px) {
@@ -433,8 +503,6 @@ export default function GeneratorPage({
             flex: 1 1 auto;
           }
 
-         
-
           .success-actions {
             flex-direction: column !important;
           }
@@ -442,122 +510,31 @@ export default function GeneratorPage({
           .success-actions > button {
             width: 100%;
           }
+
+          .preview-drawer {
+            width: 100vw !important;
+          }
         }
       `}</style>
 
-      {!projectId && (
+      {!resolvedProjectId && (
         <div style={styles.notice}>
           Select a project first from the Projects page to load endpoints and
           generate AI test cases.
         </div>
       )}
 
-      <section className="generator-main-grid" style={styles.mainGrid}>
-        <aside className="generator-left-pane" style={styles.leftPane}>
-          <div style={styles.leftPaneHeader}>
-            <div style={styles.leftTitle}>APIs</div>
-            <div style={styles.leftSubtle}>Endpoint Explorer</div>
-          </div>
-
-          <div className="generator-left-body" style={styles.explorerBody}>
-            {endpointsLoading && (
-              <div style={styles.infoBox}>Loading endpoints...</div>
-            )}
-
-            {!!endpointsErr && (
-              <div style={{ ...styles.infoBox, ...styles.errorInfo }}>
-                Error: {endpointsErr}
-              </div>
-            )}
-
-            {!endpointsLoading && !endpointsErr && projectId && (
-              <EndpointSelector
-                endpoints={endpoints}
-                selection={selection}
-                onChange={setSelection}
-              />
-            )}
-          </div>
-
-          <div style={styles.explorerFooter}>
-            <div
-              className="explorer-footer-top"
-              style={styles.explorerFooterTop}
-            >
-              <div style={styles.countBadge}>
-                {selectedCount} endpoint{selectedCount === 1 ? "" : "s"}{" "}
-                selected
-              </div>
-
-              <div
-                className="explorer-footer-actions"
-                style={styles.explorerFooterActions}
-              >
-                <button
-                  type="button"
-                  onClick={() => onBack?.()}
-                  style={styles.secondaryBtn}
-                >
-                  Back
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => loadEndpoints(options.spec_source || "")}
-                  disabled={endpointsLoading || !projectId}
-                  style={styles.secondaryBtn}
-                >
-                  Reload
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={generate}
-              disabled={
-                !projectId || run.status === "running" || selectedCount === 0
-              }
-              style={{
-                ...styles.primaryBtn,
-                opacity:
-                  !projectId || run.status === "running" || selectedCount === 0
-                    ? 0.7
-                    : 1,
-              }}
-            >
-              {run.status === "running" ? (
-                <>
-                  <span className="gen-spinner" />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                "Generate Tests"
-              )}
-            </button>
-          </div>
-        </aside>
-
-        <section style={styles.rightPane}>
-          <div className="results-header" style={styles.resultsHeader}>
+      {isTestCasesSection ? (
+        <section style={styles.testCasesWrap}>
+          <div style={styles.resultsHeader}>
             <div>
-              <div style={styles.panelTitle}>Results</div>
+              <div style={styles.panelTitle}>Test Cases</div>
               <div style={styles.panelSubtle}>
-                Generate tests here, then open the dedicated Test Cases tab for
-                full review.
+                Review generated cases for the selected project and export them.
               </div>
             </div>
 
-            <div
-              className="results-top-actions"
-              style={styles.resultsTopActions}
-            >
-              <div style={styles.modeBadge}>
-                {String(
-                  run.generation_mode || options.generation_mode || "balanced",
-                ).toUpperCase()}
-              </div>
-
+            <div style={styles.resultsTopActions}>
               <button
                 type="button"
                 onClick={exportJson}
@@ -573,139 +550,29 @@ export default function GeneratorPage({
                 disabled={!tableRows.length}
                 style={styles.secondaryBtn}
               >
-                CSV
+                Export CSV
               </button>
             </div>
           </div>
 
           <div style={styles.resultsInner}>
-            {run.status === "running" && (
-              <div style={styles.resultsProgress}>
-                <div style={styles.resultsProgressTop}>
-                  <span>
-                    {runningStepLabel || "Building test cases now..."}
-                  </span>
-                  <div style={styles.dotGroup}>
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                    <span className="gen-dot" />
-                  </div>
-                </div>
-                <div style={styles.resultsProgressBarTrack}>
-                  <div style={styles.resultsProgressBarFill} />
+            {!resolvedProjectId ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>No project selected</div>
+                <div style={styles.emptyStateText}>
+                  Open a project from the Projects tab first.
                 </div>
               </div>
-            )}
-
-            {run.status === "error" && (
-              <div
-                style={{
-                  ...styles.infoBox,
-                  ...styles.errorInfo,
-                  marginBottom: 16,
-                }}
-              >
-                {run.error?.message ||
-                  "Something went wrong during generation."}
-              </div>
-            )}
-            {run.status === "error" &&
-              (run.spec_quality ||
-                run.blocked_endpoints.length ||
-                run.partial_endpoints.length) && (
-                <div style={styles.diagnosticsBox}>
-                  <div style={styles.diagnosticsTitle}>
-                    Spec improvement suggestions
-                  </div>
-
-                  {run.spec_quality?.summary && (
-                    <div
-                      className="strict-summary-grid"
-                      style={styles.summaryMiniGrid}
-                    >
-                      <div style={styles.summaryMiniCard}>
-                        <div style={styles.summaryMiniLabel}>Spec health</div>
-                        <div style={styles.summaryMiniValue}>
-                          {run.spec_quality.spec_health_score ?? "-"}
-                        </div>
-                      </div>
-
-                      <div style={styles.summaryMiniCard}>
-                        <div style={styles.summaryMiniLabel}>Warnings</div>
-                        <div style={styles.summaryMiniValue}>
-                          {run.spec_quality.summary.warnings ?? 0}
-                        </div>
-                      </div>
-
-                      <div style={styles.summaryMiniCard}>
-                        <div style={styles.summaryMiniLabel}>Partial</div>
-                        <div style={styles.summaryMiniValue}>
-                          {run.spec_quality.summary.partial ?? 0}
-                        </div>
-                      </div>
-
-                      <div style={styles.summaryMiniCard}>
-                        <div style={styles.summaryMiniLabel}>Blocked</div>
-                        <div style={styles.summaryMiniValue}>
-                          {run.spec_quality.summary.blocked ?? 0}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {run.blocked_endpoints.length > 0 && (
-                    <div style={styles.diagnosticsSection}>
-                      <div style={styles.diagnosticsLabel}>
-                        Affected Endpoints
-                      </div>
-
-                      <div style={styles.issueList}>
-                        {run.blocked_endpoints.map((item, idx) => (
-                          <div key={idx} style={styles.issueCard}>
-                            <div style={styles.issueTitle}>
-                              {(item.method || "").toUpperCase()}{" "}
-                              {item.path || ""}
-                            </div>
-
-                            <div style={styles.issueMeta}>
-                              Status: {item.status || "-"} • Issues:{" "}
-                              {item.issues_count ?? 0}
-                            </div>
-
-                            {Array.isArray(item.issues) &&
-                              item.issues.map((issue, issueIdx) => (
-                                <div
-                                  key={issueIdx}
-                                  style={styles.issueSubBlock}
-                                >
-                                  <div style={styles.issueText}>
-                                    {issue.message}
-                                  </div>
-
-                                  {issue.suggested_fix?.content && (
-                                    <div style={styles.fixBox}>
-                                      <div style={styles.fixTitle}>
-                                        Suggested patch (
-                                        {issue.suggested_fix.format || "text"})
-                                      </div>
-                                      <pre style={styles.fixCode}>
-                                        {issue.suggested_fix.content}
-                                      </pre>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+            ) : !run.testplan || !tableRows.length ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>
+                  No generated test cases yet
                 </div>
-              )}
-
-            {run.status === "done" && run.testplan && (
+                <div style={styles.emptyStateText}>
+                  Go to Generate Tests, select endpoints, and run generation.
+                </div>
+              </div>
+            ) : (
               <>
                 <div style={{ marginBottom: 18 }}>
                   <ResultsSummary
@@ -715,45 +582,581 @@ export default function GeneratorPage({
                   />
                 </div>
 
-                <div style={styles.successBox}>
-                  <div style={styles.successTitle}>
-                    Test generation completed
-                  </div>
-                  <div style={styles.successText}>
-                    {tableRows.length} test case
-                    {tableRows.length === 1 ? "" : "s"} generated successfully.
-                    Open the dedicated Test Cases tab for readable review and
-                    case details.
-                  </div>
+                <div
+                  style={{
+                    ...styles.tableOnlyWrap,
+                    ...(isPreviewOpen ? styles.tableOnlyWrapBlurred : {}),
+                  }}
+                >
+                  <div style={styles.tablePane}>
+                    <div style={styles.tablePaneHead}>
+                      <div style={styles.tablePaneTitle}>
+                        Generated Test Cases
+                      </div>
+                      <div style={styles.tablePaneMeta}>
+                        {tableRows.length} row
+                        {tableRows.length === 1 ? "" : "s"}
+                      </div>
+                    </div>
 
-                  <div
-                    className="success-actions"
-                    style={styles.successActions}
-                  >
-                    <button
-                      type="button"
-                      onClick={onViewTestCases}
-                      style={styles.primaryBtnCompact}
+                    <div style={styles.tableWrap}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, width: 240 }}>ID</th>
+                            <th style={styles.th}>Title</th>
+                            <th style={{ ...styles.th, width: 110 }}>Type</th>
+                            <th style={{ ...styles.th, width: 130 }}>
+                              Priority
+                            </th>
+                            <th style={{ ...styles.th, width: 240 }}>API</th>
+                            <th style={{ ...styles.th, width: 100 }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map((row) => {
+                            const isActive = selectedCase?.id === row.id;
+
+                            return (
+                              <tr
+                                key={
+                                  row.id ||
+                                  `${row.suite_id}-${row.ref?.caseIndex}`
+                                }
+                                style={isActive ? styles.trActive : undefined}
+                              >
+                                <td style={styles.tdMono}>{row.id || "-"}</td>
+                                <td
+                                  style={styles.tdTitle}
+                                  title={row.objective || row.title || "-"}
+                                >
+                                  {row.objective || row.title || "-"}
+                                </td>
+                                <td style={styles.td}>
+                                  {row.test_type || "-"}
+                                </td>
+                                <td style={styles.td}>{row.priority || "-"}</td>
+                                <td style={styles.tdApi}>
+                                  {(
+                                    row.api_details?.method || ""
+                                  ).toUpperCase()}{" "}
+                                  {row.api_details?.path || ""}
+                                </td>{" "}
+                                <td style={{ ...styles.td, width: 100 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCaseId(row.id);
+                                      setIsPreviewOpen(true);
+                                    }}
+                                    style={
+                                      isActive && isPreviewOpen
+                                        ? styles.viewBtnActive
+                                        : styles.viewBtn
+                                    }
+                                  >
+                                    View
+                                  </button>
+                                </td>{" "}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {isPreviewOpen && selectedCase ? (
+                  <>
+                    <div
+                      style={styles.previewOverlay}
+                      onClick={() => setIsPreviewOpen(false)}
+                    />
+
+                    <aside
+                      className="preview-drawer"
+                      style={styles.previewDrawer}
                     >
-                      View Test Cases
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+                      <div style={styles.previewHead}>
+                        <div>
+                          <div style={styles.previewTitle}>
+                            Test Case Preview
+                          </div>
+                          <div style={styles.previewSubtle}>
+                            Detailed view for selected test case
+                          </div>
+                        </div>
 
-            {run.status === "idle" && (
-              <div style={styles.emptyState}>
-                <div style={styles.emptyStateTitle}>No generation yet</div>
-                <div style={styles.emptyStateText}>
-                  Select one or more endpoints from the explorer and click
-                  Generate Tests.
-                </div>
-              </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsPreviewOpen(false)}
+                          style={styles.previewCloseBtn}
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div style={styles.previewBody}>
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewCaseTitle}>
+                            {selectedCase.title || "Untitled Test Case"}
+                          </div>
+                          <div style={styles.previewMeta}>
+                            {selectedCase.id || "-"} •{" "}
+                            {selectedCase.test_type || "-"} •{" "}
+                            {selectedCase.priority || "-"}
+                          </div>
+                        </div>
+
+                        <div style={styles.previewGrid}>
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>Module</div>
+                            <div style={styles.previewMiniValue}>
+                              {selectedCase.module || "-"}
+                            </div>
+                          </div>
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>API</div>
+                            <div style={styles.previewMiniValue}>
+                              {(
+                                selectedCase.api_details?.method || ""
+                              ).toUpperCase()}{" "}
+                              {selectedCase.api_details?.path || ""}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Preconditions</div>
+                          <DetailList items={selectedCase.preconditions} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Steps</div>
+                          <DetailList items={selectedCase.steps} ordered />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Expected Results
+                          </div>
+                          <DetailList items={selectedCase.expected_results} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Validation Focus
+                          </div>
+                          <DetailList items={selectedCase.validation_focus} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>References</div>
+                          <DetailList items={selectedCase.references} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Test Data Summary
+                          </div>
+                          <div style={styles.previewText}>
+                            {selectedCase.test_data_summary || "-"}
+                          </div>
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Path Params</div>
+                          {selectedCase.test_data?.path_params &&
+                          Object.keys(selectedCase.test_data.path_params)
+                            .length > 0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.path_params)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Query Params</div>
+                          {selectedCase.test_data?.query_params &&
+                          Object.keys(selectedCase.test_data.query_params)
+                            .length > 0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.query_params)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Headers</div>
+                          {selectedCase.test_data?.headers &&
+                          Object.keys(selectedCase.test_data.headers).length >
+                            0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.headers)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Cookies</div>
+                          {selectedCase.test_data?.cookies &&
+                          Object.keys(selectedCase.test_data.cookies).length >
+                            0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.cookies)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Request Body</div>
+                          {selectedCase.test_data?.request_body !== undefined &&
+                          selectedCase.test_data?.request_body !== null ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.request_body)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Review Notes</div>
+                          <div style={styles.previewText}>
+                            {selectedCase.review_notes || "-"}
+                          </div>
+                        </div>
+                      </div>
+                    </aside>
+                  </>
+                ) : null}
+              </>
             )}
           </div>
         </section>
-      </section>
+      ) : (
+        <section className="generator-main-grid" style={styles.mainGrid}>
+          <aside className="generator-left-pane" style={styles.leftPane}>
+            <div style={styles.leftPaneHeader}>
+              <div style={styles.leftTitle}>APIs</div>
+              <div style={styles.leftSubtle}>Endpoint Explorer</div>
+            </div>
+
+            <div className="generator-left-body" style={styles.explorerBody}>
+              {endpointsLoading && (
+                <div style={styles.infoBox}>Loading endpoints...</div>
+              )}
+
+              {!!endpointsErr && (
+                <div style={{ ...styles.infoBox, ...styles.errorInfo }}>
+                  Error: {endpointsErr}
+                </div>
+              )}
+
+              {!endpointsLoading && !endpointsErr && resolvedProjectId && (
+                <EndpointSelector
+                  endpoints={endpoints}
+                  selection={selection}
+                  onChange={setSelection}
+                />
+              )}
+            </div>
+
+            <div style={styles.explorerFooter}>
+              <div
+                className="explorer-footer-top"
+                style={styles.explorerFooterTop}
+              >
+                <div style={styles.countBadge}>
+                  {selectedCount} endpoint{selectedCount === 1 ? "" : "s"}{" "}
+                  selected
+                </div>
+
+                <div
+                  className="explorer-footer-actions"
+                  style={styles.explorerFooterActions}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onBack?.()}
+                    style={styles.secondaryBtn}
+                  >
+                    Back
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      loadEndpoints(resolvedOptions.spec_source || "")
+                    }
+                    disabled={endpointsLoading || !resolvedProjectId}
+                    style={styles.secondaryBtn}
+                  >
+                    Reload
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={generate}
+                disabled={
+                  !resolvedProjectId ||
+                  run.status === "running" ||
+                  selectedCount === 0
+                }
+                style={{
+                  ...styles.primaryBtn,
+                  opacity:
+                    !resolvedProjectId ||
+                    run.status === "running" ||
+                    selectedCount === 0
+                      ? 0.7
+                      : 1,
+                }}
+              >
+                {run.status === "running" ? (
+                  <>
+                    <span className="gen-spinner" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  "Generate Tests"
+                )}
+              </button>
+            </div>
+          </aside>
+
+          <section style={styles.rightPane}>
+            <div className="results-header" style={styles.resultsHeader}>
+              <div>
+                <div style={styles.panelTitle}>Results</div>
+                <div style={styles.panelSubtle}>
+                  Generate tests here, then open the dedicated Test Cases tab
+                  for full review.
+                </div>
+              </div>
+
+              <div
+                className="results-top-actions"
+                style={styles.resultsTopActions}
+              >
+                <div style={styles.modeBadge}>
+                  {String(
+                    run.generation_mode ||
+                      resolvedOptions.generation_mode ||
+                      "balanced",
+                  ).toUpperCase()}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={exportJson}
+                  disabled={!run.testplan}
+                  style={styles.secondaryBtn}
+                >
+                  Export JSON
+                </button>
+
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  disabled={!tableRows.length}
+                  style={styles.secondaryBtn}
+                >
+                  CSV
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.resultsInner}>
+              {run.status === "running" && (
+                <div style={styles.resultsProgress}>
+                  <div style={styles.resultsProgressTop}>
+                    <span>
+                      {runningStepLabel || "Building test cases now..."}
+                    </span>
+                    <div style={styles.dotGroup}>
+                      <span className="gen-dot" />
+                      <span className="gen-dot" />
+                      <span className="gen-dot" />
+                      <span className="gen-dot" />
+                      <span className="gen-dot" />
+                    </div>
+                  </div>
+                  <div style={styles.resultsProgressBarTrack}>
+                    <div style={styles.resultsProgressBarFill} />
+                  </div>
+                </div>
+              )}
+
+              {run.status === "error" && (
+                <div
+                  style={{
+                    ...styles.infoBox,
+                    ...styles.errorInfo,
+                    marginBottom: 16,
+                  }}
+                >
+                  {run.error?.message ||
+                    "Something went wrong during generation."}
+                </div>
+              )}
+
+              {run.status === "error" &&
+                (run.spec_quality ||
+                  run.blocked_endpoints.length ||
+                  run.partial_endpoints.length) && (
+                  <div style={styles.diagnosticsBox}>
+                    <div style={styles.diagnosticsTitle}>
+                      Spec improvement suggestions
+                    </div>
+
+                    {run.spec_quality?.summary && (
+                      <div
+                        className="strict-summary-grid"
+                        style={styles.summaryMiniGrid}
+                      >
+                        <div style={styles.summaryMiniCard}>
+                          <div style={styles.summaryMiniLabel}>Spec health</div>
+                          <div style={styles.summaryMiniValue}>
+                            {run.spec_quality.spec_health_score ?? "-"}
+                          </div>
+                        </div>
+
+                        <div style={styles.summaryMiniCard}>
+                          <div style={styles.summaryMiniLabel}>Warnings</div>
+                          <div style={styles.summaryMiniValue}>
+                            {run.spec_quality.summary.warnings ?? 0}
+                          </div>
+                        </div>
+
+                        <div style={styles.summaryMiniCard}>
+                          <div style={styles.summaryMiniLabel}>Partial</div>
+                          <div style={styles.summaryMiniValue}>
+                            {run.spec_quality.summary.partial ?? 0}
+                          </div>
+                        </div>
+
+                        <div style={styles.summaryMiniCard}>
+                          <div style={styles.summaryMiniLabel}>Blocked</div>
+                          <div style={styles.summaryMiniValue}>
+                            {run.spec_quality.summary.blocked ?? 0}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {run.blocked_endpoints.length > 0 && (
+                      <div style={styles.diagnosticsSection}>
+                        <div style={styles.diagnosticsLabel}>
+                          Affected Endpoints
+                        </div>
+
+                        <div style={styles.issueList}>
+                          {run.blocked_endpoints.map((item, idx) => (
+                            <div key={idx} style={styles.issueCard}>
+                              <div style={styles.issueTitle}>
+                                {(item.method || "").toUpperCase()}{" "}
+                                {item.path || ""}
+                              </div>
+
+                              <div style={styles.issueMeta}>
+                                Status: {item.status || "-"} • Issues:{" "}
+                                {item.issues_count ?? 0}
+                              </div>
+
+                              {Array.isArray(item.issues) &&
+                                item.issues.map((issue, issueIdx) => (
+                                  <div
+                                    key={issueIdx}
+                                    style={styles.issueSubBlock}
+                                  >
+                                    <div style={styles.issueText}>
+                                      {issue.message}
+                                    </div>
+
+                                    {issue.suggested_fix?.content && (
+                                      <div style={styles.fixBox}>
+                                        <div style={styles.fixTitle}>
+                                          Suggested patch (
+                                          {issue.suggested_fix.format || "text"}
+                                          )
+                                        </div>
+                                        <pre style={styles.fixCode}>
+                                          {issue.suggested_fix.content}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              {run.status === "done" && run.testplan && (
+                <>
+                  <div style={{ marginBottom: 18 }}>
+                    <ResultsSummary
+                      rows={tableRows}
+                      report={run.report}
+                      testplan={run.testplan}
+                    />
+                  </div>
+
+                  <div style={styles.successBox}>
+                    <div style={styles.successTitle}>
+                      Test generation completed
+                    </div>
+                    <div style={styles.successText}>
+                      {tableRows.length} test case
+                      {tableRows.length === 1 ? "" : "s"} generated
+                      successfully. Open the dedicated Test Cases tab for
+                      readable review and case details.
+                    </div>
+
+                    <div
+                      className="success-actions"
+                      style={styles.successActions}
+                    >
+                      <button
+                        type="button"
+                        onClick={onViewTestCases}
+                        style={styles.primaryBtnCompact}
+                      >
+                        View Test Cases
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {run.status === "idle" && (
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyStateTitle}>No generation yet</div>
+                  <div style={styles.emptyStateText}>
+                    Select one or more endpoints from the explorer and click
+                    Generate Tests.
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        </section>
+      )}
     </div>
   );
 }
@@ -784,6 +1187,307 @@ const styles = {
     alignItems: "start",
     width: "100%",
     minWidth: 0,
+  },
+
+  testCasesWrap: {
+    minWidth: 0,
+    width: "100%",
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    background: "#fff",
+    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
+    overflow: "hidden",
+  },
+
+  tableOnlyWrap: {
+    position: "relative",
+    transition: "all 0.2s ease",
+  },
+
+  tableOnlyWrapBlurred: {
+    filter: "blur(3px)",
+    opacity: 0.55,
+    pointerEvents: "none",
+    userSelect: "none",
+  },
+
+  tablePane: {
+    minWidth: 0,
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    overflow: "hidden",
+    background: "#fff",
+  },
+
+  tablePaneHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 16px",
+    borderBottom: "1px solid #eef2f7",
+    background: "#fcfdff",
+    flexWrap: "wrap",
+  },
+
+  tablePaneTitle: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#111827",
+  },
+
+  tablePaneMeta: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#64748b",
+  },
+
+  tableWrap: {
+    width: "100%",
+    overflowX: "auto",
+  },
+
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    tableLayout: "fixed",
+  },
+
+  th: {
+    textAlign: "left",
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#475569",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    padding: "12px 14px",
+    borderBottom: "1px solid #e5e7eb",
+    background: "#f8fafc",
+    whiteSpace: "nowrap",
+  },
+
+  td: {
+    fontSize: 14,
+    color: "#334155",
+    padding: "12px 14px",
+    borderBottom: "1px solid #eef2f7",
+    verticalAlign: "top",
+  },
+
+  tdMono: {
+    fontSize: 12,
+    color: "#334155",
+    padding: "12px 14px",
+    borderBottom: "1px solid #eef2f7",
+    verticalAlign: "top",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    lineHeight: 1.5,
+  },
+
+  tdTitle: {
+    fontSize: 14,
+    color: "#0f172a",
+    padding: "12px 14px",
+    borderBottom: "1px solid #eef2f7",
+    verticalAlign: "top",
+    fontWeight: 700,
+    maxWidth: 420,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    lineHeight: 1.5,
+  },
+
+  tdApi: {
+    fontSize: 14,
+    color: "#334155",
+    padding: "12px 14px",
+    borderBottom: "1px solid #eef2f7",
+    verticalAlign: "top",
+    lineHeight: 1.5,
+    wordBreak: "break-word",
+  },
+
+  trActive: {
+    background: "#f8fbff",
+  },
+
+  viewBtn: {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #dbe3f0",
+    background: "#fff",
+    color: "#0f172a",
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  viewBtnActive: {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #c7d2fe",
+    background: "#eef2ff",
+    color: "#3730a3",
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  previewOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.20)",
+    zIndex: 40,
+    animation: "overlayFadeIn 0.18s ease-out",
+  },
+
+  previewDrawer: {
+    position: "fixed",
+    top: 0,
+    right: 0,
+    width: "min(560px, 92vw)",
+    height: "100vh",
+    background: "#ffffff",
+    borderLeft: "1px solid #e5e7eb",
+    boxShadow: "-20px 0 50px rgba(15, 23, 42, 0.16)",
+    zIndex: 50,
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr)",
+    animation: "previewSlideIn 0.24s ease-out",
+    willChange: "transform, opacity",
+  },
+
+  previewHead: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #eef2f7",
+    background: "#fcfdff",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#111827",
+    marginBottom: 4,
+  },
+
+  previewSubtle: {
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 1.4,
+  },
+
+  previewCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    border: "1px solid #dbe3f0",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 18,
+    fontWeight: 700,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+
+  previewBody: {
+    display: "grid",
+    gap: 16,
+    padding: 16,
+    overflow: "auto",
+  },
+
+  previewSection: {
+    display: "grid",
+    gap: 8,
+  },
+
+  previewCaseTitle: {
+    fontSize: 20,
+    fontWeight: 800,
+    color: "#0f172a",
+    lineHeight: 1.35,
+  },
+
+  previewMeta: {
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+
+  previewLabel: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#475569",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+
+  previewText: {
+    fontSize: 14,
+    color: "#334155",
+    lineHeight: 1.7,
+    whiteSpace: "pre-wrap",
+  },
+  previewCodeBlock: {
+    margin: 0,
+    padding: 12,
+    borderRadius: 12,
+    background: "#0f172a",
+    color: "#e5e7eb",
+    fontSize: 12,
+    lineHeight: 1.6,
+    overflowX: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    border: "1px solid #1e293b",
+  },
+
+  detailList: {
+    margin: 0,
+    paddingLeft: 18,
+    color: "#334155",
+    lineHeight: 1.7,
+    fontSize: 14,
+  },
+
+  detailMuted: {
+    fontSize: 14,
+    color: "#94a3b8",
+  },
+
+  previewGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 12,
+  },
+
+  previewMiniCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 12,
+    background: "#fcfdff",
+  },
+
+  previewMiniLabel: {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    marginBottom: 6,
+  },
+
+  previewMiniValue: {
+    fontSize: 14,
+    color: "#0f172a",
+    fontWeight: 700,
+    lineHeight: 1.5,
+    wordBreak: "break-word",
   },
 
   leftPane: {
@@ -861,6 +1565,7 @@ const styles = {
     fontSize: 11,
     whiteSpace: "nowrap",
   },
+
   summaryMiniGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",

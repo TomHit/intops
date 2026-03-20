@@ -87,7 +87,7 @@ function fieldNameHints(fieldName = "") {
   if (n === "x-device-token" || n === "device-token") {
     return "sample-device-token";
   }
-  if (n === "x-device-id") return "dev_123";
+  if (n.includes("device")) return "device-123";
   if (n === "otp" || n.includes("otp")) return "123456";
   if (n === "code" || n.endsWith("_code")) return "123456";
   if (n === "status") return "active";
@@ -449,12 +449,18 @@ function toRequestShape(valid) {
   };
 }
 
-function buildBodyRequiredFieldNegatives(validBody) {
+function buildBodyRequiredFieldNegatives(validBody, requestSchema = {}) {
   const out = [];
 
   if (!isObject(validBody)) return out;
 
-  for (const fieldName of Object.keys(validBody)) {
+  const requiredFields = Array.isArray(requestSchema?.required)
+    ? requestSchema.required
+    : [];
+
+  for (const fieldName of requiredFields) {
+    if (!(fieldName in validBody)) continue;
+
     const missingBody = clone(validBody);
     delete missingBody[fieldName];
 
@@ -671,7 +677,10 @@ export function resolveEndpointTestData(endpoint) {
     });
   }
 
-  for (const bodyNeg of buildBodyRequiredFieldNegatives(result.valid.body)) {
+  for (const bodyNeg of buildBodyRequiredFieldNegatives(
+    result.valid.body,
+    preferredBody?.schema || {},
+  )) {
     if (bodyNeg.kind === "body_missing_required_field") {
       result.negative.missingRequired.push({
         field: bodyNeg.field,

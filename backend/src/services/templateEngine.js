@@ -18,6 +18,330 @@ function mergeObjects(base, extra) {
   };
 }
 
+function isPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function lc(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function paramName(param) {
+  return String(param?.name || "").trim();
+}
+
+function isInternalOrDebugParam(name) {
+  const n = lc(name);
+  return (
+    n.startsWith("debug_") || n.startsWith("trace_") || n.startsWith("test_")
+  );
+}
+
+function findParamByName(list, name) {
+  const target = lc(name);
+  return (Array.isArray(list) ? list : []).find((p) => lc(p?.name) === target);
+}
+
+function firstDefined(...values) {
+  for (const v of values) {
+    if (v !== undefined && v !== null) return v;
+  }
+  return undefined;
+}
+
+function semanticSampleValue(name, schema = {}) {
+  const n = lc(name);
+  const type = lc(schema?.type);
+  const format = lc(schema?.format);
+
+  if (Array.isArray(schema?.enum) && schema.enum.length > 0) {
+    return schema.enum[0];
+  }
+
+  if (schema?.example !== undefined) return schema.example;
+  if (schema?.default !== undefined) return schema.default;
+
+  if (n === "tf" || n === "timeframe") return "M15";
+  if (n === "symbol") return "XAUUSD";
+  if (n === "symbols") return "XAUUSD,EURUSD";
+  if (n === "device" || n === "deviceid" || n === "device_id") {
+    return "test-device-001";
+  }
+  if (n === "x-device-id") return "test-device-001";
+  if (n === "accept") return "application/json";
+  if (n === "content-type") return "application/json";
+  if (n.includes("email")) return "qa.user@example.com";
+  if (n === "id" || n.endsWith("id") || n.endsWith("_id")) return "12345";
+
+  if (format === "uuid") return "123e4567-e89b-12d3-a456-426614174000";
+  if (format === "date-time") return "2026-01-01T00:00:00Z";
+  if (format === "date") return "2026-01-01";
+
+  if (type === "boolean") return false;
+  if (type === "integer" || type === "number") return 1;
+  if (type === "array") return [];
+  if (type === "object") return {};
+
+  return "sample_value";
+}
+
+function normalizeParamValue(name, schema, currentValue) {
+  if (
+    currentValue === undefined ||
+    currentValue === null ||
+    currentValue === ""
+  ) {
+    return semanticSampleValue(name, schema);
+  }
+
+  const n = lc(name);
+
+  if (Array.isArray(schema?.enum) && schema.enum.length > 0) {
+    return schema.enum.includes(currentValue) ? currentValue : schema.enum[0];
+  }
+
+  if (n === "tf" || n === "timeframe") {
+    const allowed = ["M1", "M5", "M15", "H1", "H4", "D1"];
+    return allowed.includes(String(currentValue)) ? currentValue : "M15";
+  }
+
+  if (n === "symbol") {
+    return String(currentValue).trim() || "XAUUSD";
+  }
+
+  if (n === "symbols") {
+    const raw = String(currentValue).trim();
+    if (!raw || !/[A-Z]{3,6}/.test(raw)) return "XAUUSD,EURUSD";
+    return raw;
+  }
+
+  if (
+    n === "device" ||
+    n === "deviceid" ||
+    n === "device_id" ||
+    n === "x-device-id"
+  ) {
+    return "test-device-001";
+  }
+
+  if (n === "accept") return "application/json";
+  if (n === "content-type") return "application/json";
+
+  return currentValue;
+}
+
+function buildPositiveParams(
+  paramDefs,
+  resolvedValues = {},
+  { includeOptional = false } = {},
+) {
+  const out = {};
+  const defs = Array.isArray(paramDefs) ? paramDefs : [];
+
+  for (const param of defs) {
+    const name = paramName(param);
+    if (!name) continue;
+    if (isInternalOrDebugParam(name)) continue;
+    if (!includeOptional && !param?.required) continue;
+
+    const schema = param?.schema || {};
+    const existing = resolvedValues?.[name];
+    out[name] = normalizeParamValue(name, schema, existing);
+  }
+
+  return out;
+}
+
+function keepUsefulHeaders(endpoint, resolvedHeaders = {}) {
+  const headerDefs = endpoint?.params?.header || [];
+  const out = {};
+
+  for (const param of headerDefs) {
+    const name = paramName(param);
+    if (!name) continue;
+    if (isInternalOrDebugParam(name)) continue;
+    if (
+      !param?.required &&
+      lc(name) !== "accept" &&
+      lc(name) !== "content-type"
+    ) {
+      continue;
+    }
+
+    const schema = param?.schema || {};
+    const existing =
+      resolvedHeaders?.[name] ??
+      resolvedHeaders?.[name.toLowerCase()] ??
+      resolvedHeaders?.[
+        Object.keys(resolvedHeaders || {}).find((k) => lc(k) === lc(name))
+      ];
+
+    out[name] = normalizeParamValue(name, schema, existing);
+  }
+
+  if (!("Accept" in out) && !("accept" in out)) {
+    out.Accept = "application/json";
+  }
+
+  return out;
+}
+
+function alignDeviceValues(request) {
+  const next = {
+    path_params: { ...(request?.path_params || {}) },
+    query_params: { ...(request?.query_params || {}) },
+    headers: { ...(request?.headers || {}) },
+    request_body: request?.request_body,
+  };
+
+  const q = next.query_params;
+  const h = next.headers;
+
+  const queryDeviceKey = Object.keys(q).find((k) =>
+    ["device", "deviceid", "device_id"].includes(lc(k)),
+  );
+  const headerDeviceKey = Object.keys(h).find((k) => lc(k) === "x-device-id");
+
+  const unifiedDevice =
+    (queryDeviceKey && q[queryDeviceKey]) ||
+    (headerDeviceKey && h[headerDeviceKey]) ||
+    "test-device-001";
+
+  if (queryDeviceKey) q[queryDeviceKey] = unifiedDevice;
+  if (headerDeviceKey) h[headerDeviceKey] = unifiedDevice;
+
+  return next;
+}
+
+function buildMinimalPositiveRequest(endpoint, resolved) {
+  const pathParams = buildPositiveParams(
+    endpoint?.params?.path || [],
+    resolved?.valid?.path || {},
+    { includeOptional: true },
+  );
+
+  const preferredParams = ["tf", "timeframe", "symbols"];
+
+  const allQueryDefs = endpoint?.params?.query || [];
+
+  const requiredParams = buildPositiveParams(
+    allQueryDefs,
+    resolved?.valid?.query || {},
+    { includeOptional: false },
+  );
+
+  const preferredOptional = {};
+
+  for (const param of allQueryDefs) {
+    const name = paramName(param);
+    if (!name) continue;
+
+    if (!param?.required && preferredParams.includes(lc(name))) {
+      const schema = param?.schema || {};
+      const existing = resolved?.valid?.query?.[name];
+      preferredOptional[name] = normalizeParamValue(name, schema, existing);
+    }
+  }
+
+  const queryParams = {
+    ...requiredParams,
+    ...preferredOptional,
+  };
+
+  const headers = keepUsefulHeaders(endpoint, resolved?.valid?.headers || {});
+
+  const request = {
+    path_params: pathParams,
+    query_params: queryParams,
+    headers,
+    request_body: resolved?.valid?.body,
+  };
+
+  return alignDeviceValues(request);
+}
+
+function sanitizePositiveQueryParams(endpoint, query = {}) {
+  const defs = endpoint?.params?.query || [];
+  const out = {};
+
+  for (const [key, value] of Object.entries(query || {})) {
+    if (isInternalOrDebugParam(key)) continue;
+
+    const def = findParamByName(defs, key);
+    out[key] = normalizeParamValue(key, def?.schema || {}, value);
+  }
+
+  return out;
+}
+
+function sanitizePositiveHeaders(endpoint, headers = {}) {
+  const defs = endpoint?.params?.header || [];
+  const out = {};
+
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (isInternalOrDebugParam(key)) continue;
+
+    const def = findParamByName(defs, key);
+    out[key] = normalizeParamValue(key, def?.schema || {}, value);
+  }
+
+  if (!("Accept" in out) && !("accept" in out)) {
+    out.Accept = "application/json";
+  }
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(out)) {
+    if (lc(key) === "x-device-id") normalized["X-Device-Id"] = value;
+    else if (lc(key) === "accept") normalized["Accept"] = "application/json";
+    else normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function sanitizePositivePathParams(endpoint, pathParams = {}) {
+  const defs = endpoint?.params?.path || [];
+  const out = {};
+
+  for (const [key, value] of Object.entries(pathParams || {})) {
+    const def = findParamByName(defs, key);
+    out[key] = normalizeParamValue(key, def?.schema || {}, value);
+  }
+
+  return out;
+}
+
+function sanitizePositiveTestData(endpoint, testData = {}) {
+  const cleaned = {
+    path_params: sanitizePositivePathParams(
+      endpoint,
+      testData?.path_params || {},
+    ),
+    query_params: sanitizePositiveQueryParams(
+      endpoint,
+      testData?.query_params || {},
+    ),
+    headers: sanitizePositiveHeaders(endpoint, testData?.headers || {}),
+    cookies: testData?.cookies || {},
+    request_body: testData?.request_body,
+  };
+
+  return alignDeviceValues(cleaned);
+}
+
+function isPositiveTemplateKey(templateKey) {
+  const key = String(templateKey || "")
+    .trim()
+    .toLowerCase();
+  return (
+    key.startsWith("contract.") ||
+    key.startsWith("schema.") ||
+    key === "auth.valid_credentials"
+  );
+}
+
 function detectUniversalNegativeTemplateKeys(endpoint) {
   const out = new Set();
 
@@ -180,12 +504,14 @@ function inferResolvedTestData(templateKey, endpoint) {
   const resolved =
     endpoint?._resolvedTestData || resolveEndpointTestData(endpoint);
 
-  const validRequest = {
-    path_params: resolved?.valid?.path || {},
-    query_params: resolved?.valid?.query || {},
-    headers: resolved?.valid?.headers || {},
-    request_body: resolved?.valid?.body,
-  };
+  const validRequest = isPositiveTemplateKey(templateKey)
+    ? buildMinimalPositiveRequest(endpoint, resolved)
+    : {
+        path_params: resolved?.valid?.path || {},
+        query_params: resolved?.valid?.query || {},
+        headers: resolved?.valid?.headers || {},
+        request_body: resolved?.valid?.body,
+      };
 
   switch (templateKey) {
     case "negative.missing_required_query":
@@ -486,7 +812,7 @@ function annotateCase(tc, rule, endpoint) {
 
   const resolvedData = inferResolvedTestData(resolvedTemplateKey, endpoint);
 
-  tc.test_data = {
+  const mergedTestData = {
     path_params: mergeObjects(
       resolvedData?.path_params,
       tc?.test_data?.path_params,
@@ -502,6 +828,10 @@ function annotateCase(tc, rule, endpoint) {
         ? tc.test_data.request_body
         : resolvedData?.request_body,
   };
+
+  tc.test_data = isPositiveTemplateKey(resolvedTemplateKey)
+    ? sanitizePositiveTestData(endpoint, mergedTestData)
+    : mergedTestData;
   return tc;
 }
 function resolveLegacyTemplateKey(rule) {

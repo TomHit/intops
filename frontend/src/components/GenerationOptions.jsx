@@ -62,16 +62,33 @@ function RadioCard({ checked, title, help, onChange }) {
 }
 
 export default function GenerationOptions({ options, onChange }) {
+  const safeOptions = {
+    include: [],
+    ai: false,
+    env: "staging",
+    auth_profile: "",
+    generation_mode: "balanced",
+    spec_source: "",
+    guidance: "",
+    ...(options || {}),
+  };
+
+  const safeOnChange = typeof onChange === "function" ? onChange : () => {};
+
   function toggleInclude(key) {
-    const set = new Set(options.include || []);
+    const set = new Set(safeOptions.include || []);
     if (set.has(key)) set.delete(key);
     else set.add(key);
-    onChange({ ...options, include: Array.from(set) });
+
+    safeOnChange({
+      ...safeOptions,
+      include: Array.from(set),
+    });
   }
 
   function selectRecommended() {
-    onChange({
-      ...options,
+    safeOnChange({
+      ...safeOptions,
       include: ["contract", "schema"],
       generation_mode: "balanced",
     });
@@ -97,7 +114,7 @@ export default function GenerationOptions({ options, onChange }) {
             <TogglePill
               key={k}
               label={k}
-              checked={(options.include || []).includes(k)}
+              checked={(safeOptions.include || []).includes(k)}
               onChange={() => toggleInclude(k)}
             />
           ))}
@@ -107,8 +124,13 @@ export default function GenerationOptions({ options, onChange }) {
           <label style={styles.aiToggle}>
             <input
               type="checkbox"
-              checked={!!options.ai}
-              onChange={(e) => onChange({ ...options, ai: e.target.checked })}
+              checked={!!safeOptions.ai}
+              onChange={(e) =>
+                safeOnChange({
+                  ...safeOptions,
+                  ai: e.target.checked,
+                })
+              }
             />
             <span>Use AI enrichment</span>
           </label>
@@ -140,8 +162,13 @@ export default function GenerationOptions({ options, onChange }) {
           <div>
             <div style={styles.label}>Environment</div>
             <input
-              value={options.env || ""}
-              onChange={(e) => onChange({ ...options, env: e.target.value })}
+              value={safeOptions.env || ""}
+              onChange={(e) =>
+                safeOnChange({
+                  ...safeOptions,
+                  env: e.target.value,
+                })
+              }
               placeholder="staging"
               style={styles.input}
             />
@@ -150,9 +177,12 @@ export default function GenerationOptions({ options, onChange }) {
           <div>
             <div style={styles.label}>Auth Profile</div>
             <input
-              value={options.auth_profile || ""}
+              value={safeOptions.auth_profile || ""}
               onChange={(e) =>
-                onChange({ ...options, auth_profile: e.target.value })
+                safeOnChange({
+                  ...safeOptions,
+                  auth_profile: e.target.value,
+                })
               }
               placeholder="device"
               style={styles.input}
@@ -166,19 +196,27 @@ export default function GenerationOptions({ options, onChange }) {
 
         <div style={styles.modeRow}>
           <RadioCard
-            checked={(options.generation_mode || "balanced") === "balanced"}
+            checked={(safeOptions.generation_mode || "balanced") === "balanced"}
             title="Balanced"
             help="Covers ready and partially complete endpoints for practical QA output."
             onChange={() =>
-              onChange({ ...options, generation_mode: "balanced" })
+              safeOnChange({
+                ...safeOptions,
+                generation_mode: "balanced",
+              })
             }
           />
 
           <RadioCard
-            checked={options.generation_mode === "strict"}
+            checked={safeOptions.generation_mode === "strict"}
             title="Strict"
             help="Restricts generation to endpoints with stronger spec coverage."
-            onChange={() => onChange({ ...options, generation_mode: "strict" })}
+            onChange={() =>
+              safeOnChange({
+                ...safeOptions,
+                generation_mode: "strict",
+              })
+            }
           />
         </div>
       </section>
@@ -193,9 +231,12 @@ export default function GenerationOptions({ options, onChange }) {
 
         <div style={styles.label}>Swagger / OpenAPI URL</div>
         <input
-          value={options.spec_source || ""}
+          value={safeOptions.spec_source || ""}
           onChange={(e) =>
-            onChange({ ...options, spec_source: e.target.value })
+            safeOnChange({
+              ...safeOptions,
+              spec_source: e.target.value,
+            })
           }
           placeholder="https://app.example.com/openapi.json"
           style={styles.input}
@@ -212,8 +253,13 @@ export default function GenerationOptions({ options, onChange }) {
 
         <div style={styles.label}>Optional notes for generation</div>
         <textarea
-          value={options.guidance || ""}
-          onChange={(e) => onChange({ ...options, guidance: e.target.value })}
+          value={safeOptions.guidance || ""}
+          onChange={(e) =>
+            safeOnChange({
+              ...safeOptions,
+              guidance: e.target.value,
+            })
+          }
           placeholder="Focus on contract and schema validation. Keep steps clear for manual testers."
           style={styles.textarea}
         />

@@ -4,33 +4,43 @@ import { NAV_ITEMS } from "../../utils/navigation";
 export default function Sidebar({
   activeNav,
   onChange,
-  workspaceMode,
+  workspaceMode = "individual",
   organization,
 }) {
+  const isOrganization = workspaceMode === "organization";
+  const isIndividual = workspaceMode === "individual";
+
   const visibleNavItems = NAV_ITEMS.filter((item) => {
-    if (workspaceMode !== "organization" && item.key === "teams") {
+    if (!isOrganization && item.orgOnly) {
       return false;
     }
 
-    if (workspaceMode !== "organization" && item.key === "overview") {
+    if (!isOrganization && item.key === "teams") {
+      return false;
+    }
+
+    if (!isOrganization && item.key === "overview") {
       return false;
     }
 
     return true;
   });
 
-  const workspaceLabel =
-    workspaceMode === "organization" ? "Organization" : "Individual Workspace";
+  const workspaceLabel = isOrganization
+    ? "Organization"
+    : "Individual Workspace";
 
-  const workspaceName =
-    workspaceMode === "organization"
-      ? organization?.name || "My Organization"
-      : "Personal Workspace";
+  const workspaceName = isOrganization
+    ? organization?.name || "My Organization"
+    : "Personal Workspace";
 
-  const workspaceMeta =
-    workspaceMode === "organization"
-      ? "Teams, projects, and shared API ownership"
-      : "Projects and test generation for a single user";
+  const workspaceMeta = isOrganization
+    ? "Teams, projects, and shared API ownership"
+    : "Projects and test generation for a single user";
+
+  const brandSubtitle = isOrganization
+    ? "AI-powered team workspace"
+    : "AI-powered personal workspace";
 
   return (
     <aside className="app-sidebar">
@@ -38,7 +48,7 @@ export default function Sidebar({
         <div className="brand-mark">AI</div>
         <div>
           <div className="brand-title">API TestOps</div>
-          <div className="brand-subtitle">AI-powered workspace</div>
+          <div className="brand-subtitle">{brandSubtitle}</div>
         </div>
       </div>
 
@@ -47,6 +57,16 @@ export default function Sidebar({
         <div className="sidebar-org-name">{workspaceName}</div>
         <div className="sidebar-org-meta">{workspaceMeta}</div>
       </div>
+
+      {isIndividual ? (
+        <div className="sidebar-org-card" style={{ marginTop: 14 }}>
+          <div className="sidebar-section-label">Quick Start</div>
+          <div className="sidebar-org-name">Personal Flow</div>
+          <div className="sidebar-org-meta">
+            Create a project, add your API spec, and generate test cases faster.
+          </div>
+        </div>
+      ) : null}
 
       <nav className="sidebar-nav">
         <div className="sidebar-section-label">Workspace</div>
@@ -58,8 +78,8 @@ export default function Sidebar({
             isActive ? "active" : "",
             item.disabled ? "disabled" : "",
           ]
-            .join(" ")
-            .trim();
+            .filter(Boolean)
+            .join(" ");
 
           return (
             <button

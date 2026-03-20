@@ -6,6 +6,8 @@ export default function DashboardPage({
   onOpenProject,
   generatorSettings,
   onChangeGeneratorSettings,
+  userMode = "individual",
+  userEmail = "",
 }) {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
@@ -21,6 +23,9 @@ export default function DashboardPage({
     spec_source: "",
     spec_format: "auto",
   });
+
+  const isOrganization = userMode === "organization";
+  const isIndividual = userMode === "individual";
 
   async function load() {
     setLoading(true);
@@ -113,9 +118,16 @@ export default function DashboardPage({
       <section className="page-card">
         <div className="section-head projects-topbar">
           <div>
-            <h3 style={{ margin: 0 }}>Projects</h3>
+            <h3 style={{ margin: 0 }}>
+              {isOrganization ? "Projects" : "My Projects"}
+            </h3>
+
             <p className="muted" style={{ marginTop: 6 }}>
-              Manage multiple API projects under your organization workspace.
+              {isOrganization
+                ? "Manage multiple API projects under your organization workspace."
+                : `Create and manage your personal API projects${
+                    userEmail ? ` as ${userEmail}` : ""
+                  }.`}
             </p>
           </div>
 
@@ -133,6 +145,20 @@ export default function DashboardPage({
             </button>
           </div>
         </div>
+
+        {isIndividual ? (
+          <div
+            className="projects-info-card projects-highlight-card"
+            style={{ marginTop: 18 }}
+          >
+            <div className="projects-info-title">Personal Workspace</div>
+            <p style={{ margin: 0 }}>
+              You are using the individual flow, so there is no team or
+              organization setup required. Create a project, add your API spec,
+              and move directly into test generation.
+            </p>
+          </div>
+        ) : null}
 
         {showCreateForm && (
           <form className="projects-form-card" onSubmit={handleCreateProject}>
@@ -269,7 +295,9 @@ export default function DashboardPage({
       </section>
 
       <section className="page-card">
-        <div className="projects-panel-title">Project Directory</div>
+        <div className="projects-panel-title">
+          {isOrganization ? "Project Directory" : "Project Library"}
+        </div>
 
         {loading && <div className="info-box">Loading projects…</div>}
 
@@ -288,7 +316,11 @@ export default function DashboardPage({
         )}
 
         {!loading && !err && projects.length === 0 && (
-          <div className="info-box">No projects found.</div>
+          <div className="info-box">
+            {isOrganization
+              ? "No projects found."
+              : "No projects found yet. Create your first project to start generating test cases."}
+          </div>
         )}
       </section>
 
@@ -296,25 +328,38 @@ export default function DashboardPage({
         <div className="projects-info-stack">
           <div className="projects-info-card projects-highlight-card">
             <div className="projects-info-title">
-              Project Generation Defaults
+              {isOrganization
+                ? "Project Generation Defaults"
+                : "Personal Generation Defaults"}
             </div>
             <p style={{ margin: 0 }}>
-              Set the default test types, spec source, and generation guidance
-              for this project. These settings will be used later inside the
-              Generate Tests tab.
+              {isOrganization
+                ? "Set the default test types, spec source, and generation guidance for this project. These settings will be used later inside the Generate Tests tab."
+                : "Set your default test types, spec source, and generation guidance for personal projects. These settings will be used later inside the Generate Tests tab."}
             </p>
           </div>
 
           <div className="projects-info-card">
             <div className="projects-info-title">Generation Setup</div>
             <p className="muted" style={{ marginTop: 0 }}>
-              Configure the default environment, auth profile, coverage scope,
-              spec URL, and generation guidance for the selected project.
+              {isOrganization
+                ? "Configure the default environment, auth profile, coverage scope, spec URL, and generation guidance for the selected project."
+                : "Configure your default environment, auth profile, coverage scope, spec URL, and generation guidance for the selected project."}
             </p>
 
             <GenerationOptions
-              options={generatorSettings}
-              onChange={onChangeGeneratorSettings}
+              options={
+                generatorSettings || {
+                  env: "staging",
+                  auth_profile: "none",
+                  include: [],
+                  ai: false,
+                  endpoints_n: 10,
+                  guidance_len: 0,
+                  spec_url: "",
+                }
+              }
+              onChange={onChangeGeneratorSettings || (() => {})}
             />
           </div>
         </div>
