@@ -238,6 +238,9 @@ function makePlan({
     expected_status_candidates,
     field_target,
     spec_evidence,
+    build(endpoint, profile) {
+      return buildCaseFromScenarioPlan(endpoint, profile, this);
+    },
   };
 }
 
@@ -751,8 +754,7 @@ function applyScenarioInvalidation(req, plan, profile) {
 
   if (location === "body") {
     if (mode === "empty_body") {
-      next.request_bo;
-      dy = undefined;
+      next.request_body = undefined;
       return next;
     }
 
