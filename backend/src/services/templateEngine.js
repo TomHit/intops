@@ -1245,15 +1245,6 @@ export async function generateCasesForEndpoint(endpoint, options = {}) {
         continue;
       }
 
-      // TEMP QUICK FIX:
-      // disable legacy negative/auth cases not yet migrated to scenario engine
-      if (
-        templateKey?.startsWith("negative.") ||
-        templateKey?.startsWith("auth.")
-      ) {
-        continue;
-      }
-
       const tc = buildCaseFromCsvRule(rule, enrichedEndpoint);
       if (tc) {
         cases.push(tc);

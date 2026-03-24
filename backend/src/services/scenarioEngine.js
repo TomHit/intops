@@ -561,199 +561,138 @@ export function buildScenarioPlans(endpoint, profile, rules = []) {
 }
 
 function buildScenarioTitle(endpoint, plan) {
+  const path = endpoint?.path || "";
+
   switch (plan.template_key) {
     case "auth.missing_credentials":
-      return "Request is rejected when authentication credentials are missing";
+      return `Reject ${path} request when authentication is missing`;
 
     case "auth.invalid_credentials":
-      return "Request is rejected when authentication credentials are invalid";
+      return `Reject ${path} request when authentication is invalid`;
 
     case "negative.missing_required_query":
-      return `Request is rejected when required query parameter '${plan.field_target || "query"}' is missing`;
+      return `Reject ${path} request when query parameter '${plan.field_target}' is missing`;
 
     case "negative.missing_required_path":
-      return `Request is rejected when required path parameter '${plan.field_target || "path"}' is missing or malformed`;
+      return `Reject ${path} request when path parameter '${plan.field_target}' is invalid`;
 
     case "negative.invalid_enum":
-      return `Request is rejected when field '${plan.field_target || "field"}' uses an invalid enum value`;
+      return `Reject ${path} request when '${plan.field_target}' uses invalid enum`;
 
     case "negative.null_required_field":
-      return `Request is rejected when required field '${plan.field_target || "field"}' is null`;
+      return `Reject ${path} request when '${plan.field_target}' is null`;
 
     case "negative.invalid_format":
-      return `Request is rejected when field '${plan.field_target || "field"}' has an invalid format`;
+      return `Reject ${path} request when '${plan.field_target}' has invalid format`;
 
     case "negative.string_too_long":
-      return `Request is rejected when field '${plan.field_target || "field"}' exceeds the allowed maximum length`;
+      return `Reject ${path} request when '${plan.field_target}' exceeds max length`;
 
     case "negative.numeric_above_maximum":
-      return `Request is rejected when field '${plan.field_target || "field"}' exceeds the allowed maximum numeric value`;
+      return `Reject ${path} request when '${plan.field_target}' exceeds allowed value`;
 
     case "negative.empty_body":
-      return "Request is rejected when the required request body is empty";
+      return `Reject ${path} request when body is missing`;
 
     default:
-      return "Scenario validation case";
+      return `Validate ${path} negative scenario`;
   }
 }
-
 function buildScenarioObjective(plan) {
-  switch (plan.template_key) {
-    case "auth.missing_credentials":
-      return "Verify that the endpoint rejects the request when authentication credentials are not provided and all other request inputs remain valid.";
-
-    case "auth.invalid_credentials":
-      return "Verify that the endpoint rejects the request when authentication credentials are invalid and all other request inputs remain valid.";
-
-    case "negative.missing_required_query":
-      return `Verify that the endpoint rejects the request when required query parameter '${plan.field_target || "query"}' is omitted while the rest of the request remains valid.`;
-
-    case "negative.missing_required_path":
-      return `Verify that the endpoint rejects the request when required path parameter '${plan.field_target || "path"}' is missing or malformed while the rest of the request remains valid.`;
-
-    case "negative.invalid_enum":
-      return `Verify that the endpoint rejects the request when field '${plan.field_target || "field"}' uses a value outside the documented enum while the rest of the request remains valid.`;
-
-    case "negative.null_required_field":
-      return `Verify that the endpoint rejects the request when required field '${plan.field_target || "field"}' is null while the rest of the request remains valid.`;
-
-    case "negative.invalid_format":
-      return `Verify that the endpoint rejects the request when field '${plan.field_target || "field"}' has an invalid format while the rest of the request remains valid.`;
-
-    case "negative.string_too_long":
-      return `Verify that the endpoint rejects the request when field '${plan.field_target || "field"}' exceeds the documented maximum length while the rest of the request remains valid.`;
-
-    case "negative.numeric_above_maximum":
-      return `Verify that the endpoint rejects the request when field '${plan.field_target || "field"}' exceeds the documented maximum numeric value while the rest of the request remains valid.`;
-
-    case "negative.empty_body":
-      return "Verify that the endpoint rejects the request when the required request body is omitted while all other request inputs remain valid.";
-
-    default:
-      return "Verify endpoint validation behavior.";
-  }
+  return `Ensure API rejects request when '${plan.field_target || "input"}' is invalid, while all other inputs remain valid.`;
 }
-
 function buildScenarioSteps(endpoint, plan, req) {
   const steps = [];
   const method = normalizeMethod(endpoint?.method);
 
-  steps.push(`Set HTTP method to ${method}.`);
-  steps.push(`Use endpoint path: ${endpoint?.path || "/"}.`);
+  steps.push(`Set HTTP method to ${method}`);
+  steps.push(`Use endpoint path '${endpoint?.path}'`);
 
-  if (Object.keys(req?.path_params || {}).length > 0) {
-    steps.push(
-      "Provide valid path parameter values for all non-target path parameters.",
-    );
+  if (Object.keys(req?.headers || {}).length > 0) {
+    steps.push("Add valid headers (Authorization, Content-Type if required)");
   }
 
   if (Object.keys(req?.query_params || {}).length > 0) {
-    steps.push(
-      "Provide valid query parameter values for all non-target query parameters.",
-    );
+    steps.push("Provide valid query parameters");
   }
 
-  if (
-    req?.request_body !== undefined &&
-    req?.request_body !== null &&
-    method !== "GET"
-  ) {
-    steps.push(
-      "Prepare a valid request body with all non-target fields set correctly.",
-    );
+  if (Object.keys(req?.path_params || {}).length > 0) {
+    steps.push("Provide valid path parameters");
+  }
+
+  if (req?.request_body && method !== "GET") {
+    steps.push("Prepare request body with valid values");
   }
 
   switch (plan.template_key) {
     case "auth.missing_credentials":
-      steps.push("Do not send authentication credentials.");
+      steps.push("Do not send Authorization header");
       break;
 
     case "auth.invalid_credentials":
-      steps.push("Send invalid authentication credentials.");
+      steps.push("Send invalid Authorization token");
       break;
 
     case "negative.missing_required_query":
-      steps.push(
-        `Remove required query parameter '${plan.field_target || "query"}'.`,
-      );
+      steps.push(`Remove query parameter '${plan.field_target}'`);
       break;
 
     case "negative.missing_required_path":
-      steps.push(
-        `Set required path parameter '${plan.field_target || "path"}' to a missing or malformed value.`,
-      );
+      steps.push(`Set path parameter '${plan.field_target}' to invalid value`);
       break;
 
     case "negative.invalid_enum":
-      steps.push(
-        `Set body field '${plan.field_target || "field"}' to a value outside the documented enum.`,
-      );
+      steps.push(`Set '${plan.field_target}' to value outside allowed enum`);
       break;
 
     case "negative.null_required_field":
-      steps.push(
-        `Set required body field '${plan.field_target || "field"}' to null.`,
-      );
+      steps.push(`Set '${plan.field_target}' to null`);
       break;
 
     case "negative.invalid_format":
-      steps.push(
-        `Set body field '${plan.field_target || "field"}' to a value with invalid format.`,
-      );
+      steps.push(`Set '${plan.field_target}' to invalid format`);
       break;
 
     case "negative.string_too_long":
       steps.push(
-        `Set body field '${plan.field_target || "field"}' to a string longer than the allowed maximum length.`,
+        `Set '${plan.field_target}' to a very long string (beyond maxLength)`,
       );
       break;
 
     case "negative.numeric_above_maximum":
-      steps.push(
-        `Set body field '${plan.field_target || "field"}' to a numeric value above the documented maximum.`,
-      );
+      steps.push(`Set '${plan.field_target}' to value above allowed maximum`);
       break;
 
     case "negative.empty_body":
-      steps.push("Remove the required request body.");
-      break;
-
-    default:
-      steps.push(
-        "Modify only the targeted request dimension so the remaining request stays valid.",
-      );
+      steps.push("Do not send request body");
       break;
   }
 
-  steps.push("Send the request.");
+  steps.push("Send the request");
 
   return steps;
 }
-
 function buildScenarioExpectedResults(plan) {
   const statuses = ensureArray(plan?.expected_status_candidates).join(" or ");
 
   switch (plan.expected_outcome_family) {
     case "auth_failure":
       return [
-        "The API rejects the request due to missing or invalid authentication.",
-        statuses
-          ? `The response status is ${statuses}.`
-          : "An unauthorized or forbidden response is returned.",
-        "The endpoint does not process the request as a successful operation.",
+        "Request is rejected due to authentication failure",
+        `Response status should be ${statuses}`,
+        "No sensitive data or success response is returned",
       ];
 
     case "validation_failure":
       return [
-        "The API rejects the request because the targeted input is invalid.",
-        statuses
-          ? `The response status is ${statuses}.`
-          : "A client validation error response is returned.",
-        "The endpoint does not process invalid input as a successful request.",
+        "Request is rejected due to invalid input",
+        `Response status should be ${statuses}`,
+        `Error response should indicate issue with '${plan.field_target || "input"}'`,
+        "Request is not processed successfully",
       ];
 
     default:
-      return ["The API responds according to the endpoint contract."];
+      return ["API responds according to contract"];
   }
 }
 
@@ -812,7 +751,8 @@ function applyScenarioInvalidation(req, plan, profile) {
 
   if (location === "body") {
     if (mode === "empty_body") {
-      next.request_body = undefined;
+      next.request_bo;
+      dy = undefined;
       return next;
     }
 
