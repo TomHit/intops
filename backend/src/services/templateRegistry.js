@@ -25,33 +25,11 @@ import {
   makeSchemaRequestBodyTemplate,
 } from "../templates/schemaTemplates.js";
 
-import {
-  makeNegativeMissingRequiredQueryTemplate,
-  makeNegativeMissingRequiredPathTemplate,
-  makeNegativeUnsupportedMethodTemplate,
-  makeNegativeInvalidContentTypeTemplate,
-  makeNegativeMalformedJsonTemplate,
-  makeNegativeEmptyBodyTemplate,
-  makeNegativeResourceNotFoundTemplate,
-  makeNegativeInvalidQueryTypeTemplate,
-  makeNegativeInvalidEnumTemplate,
-  makeNegativeInvalidFormatTemplate,
-  makeNegativeStringTooLongTemplate,
-  makeNegativeNumericAboveMaximumTemplate,
-  makeNegativeAdditionalPropertyTemplate,
-  makeNegativeConflictTemplate,
-  makeNegativeRateLimitTemplate,
-  makeNegativeInvalidPaginationTemplate,
-  makeNegativeNullRequiredFieldTemplate,
-} from "../templates/negativeTemplates.js";
-
-import {
-  makeAuthMissingCredentialsTemplate,
-  makeAuthInvalidCredentialsTemplate,
-  makeAuthExpiredCredentialsTemplate,
-  makeAuthForbiddenRoleTemplate,
-} from "../templates/authTemplates.js";
-
+/**
+ * Main runtime registry:
+ * templateEngine should only build contract + schema cases.
+ * Negative + auth are owned by scenarioEngine now.
+ */
 export const TEMPLATE_REGISTRY = {
   "contract.success": makeContractSuccessTemplate,
   "contract.required_fields": makeContractRequiredFieldsTemplate,
@@ -75,29 +53,35 @@ export const TEMPLATE_REGISTRY = {
   "schema.pattern": makeSchemaPatternTemplate,
   "schema.composition": makeSchemaCompositionTemplate,
   "schema.request_body": makeSchemaRequestBodyTemplate,
+};
 
-  "negative.missing_required_query": makeNegativeMissingRequiredQueryTemplate,
-  "negative.missing_required_path": makeNegativeMissingRequiredPathTemplate,
-  "negative.unsupported_method": makeNegativeUnsupportedMethodTemplate,
-  "negative.invalid_content_type": makeNegativeInvalidContentTypeTemplate,
-  "negative.malformed_json": makeNegativeMalformedJsonTemplate,
-  "negative.empty_body": makeNegativeEmptyBodyTemplate,
-  "negative.resource_not_found": makeNegativeResourceNotFoundTemplate,
-  "negative.invalid_query_type": makeNegativeInvalidQueryTypeTemplate,
-  "negative.invalid_enum": makeNegativeInvalidEnumTemplate,
-  "negative.invalid_format": makeNegativeInvalidFormatTemplate,
-  "negative.string_too_long": makeNegativeStringTooLongTemplate,
-  "negative.numeric_above_maximum": makeNegativeNumericAboveMaximumTemplate,
-  "negative.additional_property": makeNegativeAdditionalPropertyTemplate,
-  "negative.conflict": makeNegativeConflictTemplate,
-  "negative.rate_limit": makeNegativeRateLimitTemplate,
-  "negative.invalid_pagination": makeNegativeInvalidPaginationTemplate,
-  "negative.null_required_field": makeNegativeNullRequiredFieldTemplate,
+/**
+ * Legacy registry retained only for migration/debug purposes.
+ * Do not use this from templateEngine main flow.
+ */
+export const LEGACY_TEMPLATE_REGISTRY = {
+  "negative.missing_required_query": "scenarioEngine",
+  "negative.missing_required_path": "scenarioEngine",
+  "negative.unsupported_method": "scenarioEngine",
+  "negative.invalid_content_type": "scenarioEngine",
+  "negative.malformed_json": "scenarioEngine",
+  "negative.empty_body": "scenarioEngine",
+  "negative.resource_not_found": "scenarioEngine",
+  "negative.invalid_query_type": "scenarioEngine",
+  "negative.invalid_enum": "scenarioEngine",
+  "negative.invalid_format": "scenarioEngine",
+  "negative.string_too_long": "scenarioEngine",
+  "negative.numeric_above_maximum": "scenarioEngine",
+  "negative.additional_property": "scenarioEngine",
+  "negative.conflict": "scenarioEngine",
+  "negative.rate_limit": "scenarioEngine",
+  "negative.invalid_pagination": "scenarioEngine",
+  "negative.null_required_field": "scenarioEngine",
 
-  "auth.missing_credentials": makeAuthMissingCredentialsTemplate,
-  "auth.invalid_credentials": makeAuthInvalidCredentialsTemplate,
-  "auth.expired_credentials": makeAuthExpiredCredentialsTemplate,
-  "auth.forbidden_role": makeAuthForbiddenRoleTemplate,
+  "auth.missing_credentials": "scenarioEngine",
+  "auth.invalid_credentials": "scenarioEngine",
+  "auth.expired_credentials": "scenarioEngine",
+  "auth.forbidden_role": "scenarioEngine",
 };
 
 export function getTemplateBuilder(templateKey) {
@@ -107,4 +91,9 @@ export function getTemplateBuilder(templateKey) {
 
 export function hasTemplateBuilder(templateKey) {
   return !!getTemplateBuilder(templateKey);
+}
+
+export function isScenarioOwnedTemplate(templateKey) {
+  const key = String(templateKey || "").trim();
+  return LEGACY_TEMPLATE_REGISTRY[key] === "scenarioEngine";
 }

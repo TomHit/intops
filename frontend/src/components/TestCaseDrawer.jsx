@@ -32,16 +32,18 @@ function methodTone(method) {
 }
 
 function endpointDisplay(row) {
+  const method = row?.api_details?.method || "";
+  const path = row?.api_details?.path || "";
+
   return {
+    primary: `${method} ${path}`.trim() || "-",
     baseUrl: row?.api_details?.base_url || "-",
     fullResolved:
       row?.api_details?.full_url_resolved ||
       row?.api_details?.full_url_template ||
-      row?.api_details?.path ||
+      path ||
       "-",
-    fullTemplate:
-      row?.api_details?.full_url_template || row?.api_details?.path || "-",
-    path: row?.api_details?.path || "-",
+    path,
   };
 }
 
@@ -113,8 +115,9 @@ export default function TestCaseDrawer({ open, row, onClose }) {
               <ReviewPill needsReview={row?.needs_review} />
             </div>
 
-            <div style={styles.title}>{row?.id || "Test Case"}</div>
-            <div style={styles.sub}>{drawerTitle}</div>
+            <div style={styles.title}>{drawerTitle || "Test Case"}</div>
+
+            <div style={styles.sub}>{row?.id || "-"}</div>
           </div>
 
           <button style={styles.closeBtn} onClick={onClose} type="button">
@@ -130,10 +133,22 @@ export default function TestCaseDrawer({ open, row, onClose }) {
           </InfoCard>
           <InfoCard label="Method">{row?.api_details?.method || "-"}</InfoCard>
         </div>
+        <div style={styles.metaCardWide}>
+          <div style={styles.metaLabel}>Why this test exists</div>
+          <div style={styles.metaWideValue}>
+            {row?.validation_focus?.[0] ||
+              "Covers API behavior validation based on detected scenario"}
+          </div>
+        </div>
 
         <div style={styles.fullWidthCards}>
           <div style={styles.metaCardWide}>
-            <div style={styles.metaLabel}>Full Endpoint</div>
+            <div style={styles.metaLabel}>Endpoint</div>
+            <div style={styles.endpointPrimary}>{endpointInfo.primary}</div>
+          </div>
+
+          <div style={styles.metaCardWide}>
+            <div style={styles.metaLabel}>Full URL</div>
             <div style={styles.endpointBlock}>{endpointInfo.fullResolved}</div>
           </div>
 
@@ -285,6 +300,19 @@ const styles = {
     lineHeight: 1.2,
     marginBottom: 4,
     wordBreak: "break-word",
+  },
+  endpointPrimary: {
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#0f172a",
+    background: "#f1f5f9",
+    border: "1px solid #dbe4f0",
+    borderRadius: 12,
+    padding: "10px 12px",
+    lineHeight: 1.6,
+    wordBreak: "break-all",
   },
 
   sub: {

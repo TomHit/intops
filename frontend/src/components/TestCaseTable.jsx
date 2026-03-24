@@ -85,7 +85,7 @@ export default function TestCaseTable({
               "";
 
             const endpoint =
-              `${r.api_details?.method || ""} ${endpointUrl}`.trim();
+              `${r.api_details?.method || ""} ${r.api_details?.path || ""}`.trim();
 
             return (
               <div
@@ -101,8 +101,19 @@ export default function TestCaseTable({
                 <div style={styles.idCell}>{shortText(r.id, 24)}</div>
 
                 <div style={styles.titleCell}>
-                  <div style={styles.title}>{shortText(r.title, 80)}</div>
-                  <div style={styles.subtle}>{shortText(r.module, 38)}</div>
+                  <div style={styles.title}>{shortText(r.title, 90)}</div>
+
+                  <div style={styles.metaRow}>
+                    <span style={styles.moduleChip}>
+                      {shortText(r.module, 24)}
+                    </span>
+
+                    {r.validation_focus?.[0] && (
+                      <span style={styles.focusChip}>
+                        {shortText(r.validation_focus[0], 28)}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div style={styles.endpoint} title={endpoint}>
@@ -117,11 +128,15 @@ export default function TestCaseTable({
                       color: typeBadge.color,
                     }}
                   >
-                    {r.test_type || "-"}
+                    {String(r.test_type || "-").toUpperCase()}
                   </span>
                 </div>
 
-                <div style={styles.priority}>{r.priority || "-"}</div>
+                <div style={styles.priorityWrap}>
+                  <span style={styles.priorityBadge(r.priority)}>
+                    {r.priority || "-"}
+                  </span>
+                </div>
 
                 <div>
                   <span
@@ -258,6 +273,49 @@ const styles = {
     fontSize: 12,
     fontWeight: 700,
     whiteSpace: "nowrap",
+  },
+  metaRow: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+
+  module: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#6366f1",
+    background: "#eef2ff",
+    padding: "2px 8px",
+    borderRadius: 999,
+  },
+
+  focus: {
+    fontSize: 11,
+    color: "#475569",
+    background: "#f1f5f9",
+    padding: "2px 8px",
+    borderRadius: 999,
+  },
+
+  priorityBadge: (p) => {
+    const map = {
+      P0: { bg: "#fee2e2", color: "#991b1b" },
+      P1: { bg: "#fff7ed", color: "#9a3412" },
+      P2: { bg: "#ecfeff", color: "#155e75" },
+      P3: { bg: "#f1f5f9", color: "#334155" },
+    };
+
+    const cfg = map[p] || map.P2;
+
+    return {
+      background: cfg.bg,
+      color: cfg.color,
+      padding: "5px 10px",
+      borderRadius: 999,
+      fontWeight: 800,
+      fontSize: 12,
+    };
   },
 
   viewBtn: {

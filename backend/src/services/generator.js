@@ -732,6 +732,23 @@ function dedupeSuites(plan) {
 
   return plan;
 }
+function stripCaseMeta(testPlan) {
+  if (!testPlan || !Array.isArray(testPlan.suites)) return testPlan;
+
+  return {
+    ...testPlan,
+    suites: testPlan.suites.map((suite) => ({
+      ...suite,
+      cases: Array.isArray(suite.cases)
+        ? suite.cases.map((testCase) => {
+            if (!testCase || typeof testCase !== "object") return testCase;
+            const { meta, ...rest } = testCase;
+            return rest;
+          })
+        : [],
+    })),
+  };
+}
 
 export async function generateTestPlan(payload) {
   const project_id = payload?.project_id;
@@ -1009,19 +1026,19 @@ export async function generateTestPlan(payload) {
     });
   }
 
-  // ✅ ADD THIS LINE (critical fix)
   obj = dedupeSuites(obj);
 
-  // ✅ reassign ids after dedupe
   for (const suite of obj.suites || []) {
     (suite.cases || []).forEach((tc, idx) => {
       tc.id = ensureCaseId(tc, suite.suite_id || "suite", idx + 1);
     });
   }
 
-  await validateTestPlanOrThrow(obj);
+  const schemaSafeObj = stripCaseMeta(obj);
 
-  const report = buildReport(obj);
+  await validateTestPlanOrThrow(schemaSafeObj);
+
+  const report = buildReport(schemaSafeObj);
 
   return {
     run_id: `run_${Date.now()}`,
@@ -1052,7 +1069,7 @@ export async function generateTestPlan(payload) {
       id: e.id,
     })),
 
-    testplan: obj,
+    testplan: schemaSafeObj,
     report,
   };
 }

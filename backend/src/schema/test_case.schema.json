@@ -36,15 +36,7 @@
     },
     "test_type": {
       "type": "string",
-      "enum": [
-        "contract",
-        "schema",
-        "negative",
-        "auth",
-        "scenario",
-        "rule",
-        "ai"
-      ]
+      "enum": ["contract", "schema", "negative", "auth"]
     },
     "priority": {
       "type": "string",
@@ -56,10 +48,11 @@
     },
     "preconditions": {
       "type": "array",
+      "default": [],
       "items": {
-        "type": "string"
-      },
-      "default": []
+        "type": "string",
+        "minLength": 1
+      }
     },
     "test_data": {
       "type": "object",
@@ -95,14 +88,16 @@
       "type": "array",
       "minItems": 1,
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "expected_results": {
       "type": "array",
       "minItems": 1,
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "api_details": {
@@ -123,10 +118,11 @@
         },
         "tags": {
           "type": "array",
+          "default": [],
           "items": {
-            "type": "string"
-          },
-          "default": []
+            "type": "string",
+            "minLength": 1
+          }
         },
         "base_url": {
           "type": "string"
@@ -141,17 +137,19 @@
     },
     "validation_focus": {
       "type": "array",
+      "default": [],
       "items": {
-        "type": "string"
-      },
-      "default": []
+        "type": "string",
+        "minLength": 1
+      }
     },
     "references": {
       "type": "array",
+      "default": [],
       "items": {
-        "type": "string"
-      },
-      "default": []
+        "type": "string",
+        "minLength": 1
+      }
     },
     "needs_review": {
       "type": "boolean"

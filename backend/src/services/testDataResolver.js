@@ -11,6 +11,7 @@ function clone(value) {
 function isObject(v) {
   return v && typeof v === "object" && !Array.isArray(v);
 }
+
 function resolveJsonPointer(root, ref) {
   if (!ref || typeof ref !== "string" || !ref.startsWith("#/")) {
     return null;
@@ -114,6 +115,8 @@ function genericFieldHint(fieldName = "", schema = {}) {
   if (n.includes("phone") || n.includes("mobile")) return "9876543210";
   if (n.includes("otp") || n.endsWith("_code") || n === "code") return "123456";
   if (n.includes("token")) return "sample-token-123";
+  if (n.includes("password") || n.includes("passwd")) return "Test@123";
+  if (n.includes("username") || n.includes("user_name")) return "qa_user";
   if (n.includes("name")) return "sample_name";
   if (n.includes("title")) return "Sample Title";
   if (n.includes("description")) return "Sample description";
@@ -161,6 +164,8 @@ function fieldSignalScore(fieldName = "", schema = {}, required = false) {
   if (n.includes("email")) score += 4;
   if (n.includes("name")) score += 2;
   if (n.includes("date") || n.includes("time")) score += 2;
+  if (n.includes("password")) score += 5;
+  if (n.includes("token")) score += 5;
 
   return score;
 }
@@ -304,21 +309,21 @@ function resolveObjectSchema(schema = {}) {
       score: fieldSignalScore(name, propSchema || {}, required.has(name)),
     }))
     .sort((a, b) => b.score - a.score);
+
   if (!isObject(schema.properties) && !Array.isArray(schema.required)) {
     return {
       value: { sample_field: "sample_value" },
       source: "object-generic",
     };
   }
+
   let chosen;
 
   if (required.size > 0) {
     chosen = ranked.filter((x) => x.required);
   } else {
-    // pick top scored fields with meaningful signal
     chosen = ranked.filter((x) => x.score > 0).slice(0, 4);
 
-    // if still nothing meaningful, fallback to first few properties
     if (chosen.length === 0) {
       chosen = ranked.slice(0, 2);
     }
@@ -537,6 +542,7 @@ function normalizeHeaderName(name = "") {
   if (lower === "authorization") return "Authorization";
   return name;
 }
+
 function getPreferredRequestBodyContent(requestBody) {
   const content = requestBody?.content;
   if (!isObject(content)) return null;
@@ -581,8 +587,109 @@ function getPreferredRequestBodyContent(requestBody) {
   return null;
 }
 
+function detectEndpointType(endpoint) {
+  const path = String(endpoint?.path || "").toLowerCase();
+  const method = String(endpoint?.method || "").toUpperCase();
+
+  if (
+    path.includes("login") ||
+    path.includes("logout") ||
+    path.includes("signup") ||
+    path.includes("signin") ||
+    path.includes("auth") ||
+    path.includes("token") ||
+    path.includes("session") ||
+    path.includes("password")
+  ) {
+    return "auth";
+  }
+
+  if (method === "POST") return "create";
+  if (method === "PUT" || method === "PATCH") return "update";
+  if (method === "DELETE") return "delete";
+  if (method === "GET" && path.includes("{")) return "get_by_id";
+  if (method === "GET") return "list";
+
+  return "generic";
+}
+
+function detectAuth(endpoint) {
+  if (Array.isArray(endpoint?.security) && endpoint.security.length > 0) {
+    return "required";
+  }
+
+  const headerParams = Array.isArray(endpoint?.params?.header)
+    ? endpoint.params.header
+    : [];
+
+  const hasAuthHeaderParam = headerParams.some(
+    (h) => String(h?.name || "").toLowerCase() === "authorization",
+  );
+
+  if (hasAuthHeaderParam) return "required";
+
+  return "none";
+}
+
+function extractResponseSchema(endpoint) {
+  const responses = endpoint?.responses || {};
+  const preferred = ["200", "201", "202", "204", "default"];
+
+  for (const code of preferred) {
+    const res = responses[code];
+    if (!res) continue;
+
+    const content = res.content || {};
+    const jsonLike =
+      content["application/json"] ||
+      content["application/*+json"] ||
+      Object.values(content).find((v) => v?.schema);
+
+    if (jsonLike?.schema) {
+      return resolveSchemaRef(jsonLike.schema, endpoint);
+    }
+
+    if (code === "204") return null;
+  }
+
+  return null;
+}
+
+function getSuccessStatusCandidates(endpoint) {
+  const responses = endpoint?.responses || {};
+  const candidates = Object.keys(responses)
+    .filter((k) => /^\d+$/.test(k) && Number(k) >= 200 && Number(k) < 300)
+    .map((k) => Number(k))
+    .sort((a, b) => a - b);
+
+  if (candidates.length > 0) return candidates;
+
+  const method = String(endpoint?.method || "").toUpperCase();
+  if (method === "POST") return [201, 200];
+  if (method === "DELETE") return [204, 200];
+  return [200];
+}
+
+function inferIntentPrefix(groupKey, fieldName) {
+  const loc = groupKey === "headers" ? "header" : groupKey;
+  return `${loc}_${String(fieldName || "").toLowerCase()}`;
+}
+
+function pushNegative(arr, item) {
+  arr.push(item);
+}
+
 export function resolveEndpointTestData(endpoint) {
+  const endpointType = detectEndpointType(endpoint);
+  const auth = detectAuth(endpoint);
+  const responseSchema = extractResponseSchema(endpoint);
+  const successStatusCandidates = getSuccessStatusCandidates(endpoint);
+
   const result = {
+    endpoint_type: endpointType,
+    auth,
+    response_schema: responseSchema,
+    success_status_candidates: successStatusCandidates,
     valid: {
       path: {},
       query: {},
@@ -663,37 +770,20 @@ export function resolveEndpointTestData(endpoint) {
     result.sourceMap["headers.Accept"] = "default_header";
   }
 
-  if (!result.valid.headers["Content-Type"] && endpoint?.requestBody) {
-    const preferredBodyInfo = getPreferredRequestBodyContent(
-      endpoint.requestBody,
-    );
-
-    result.valid.headers["Content-Type"] =
-      preferredBodyInfo?.mediaType || "application/json";
-    result.sourceMap["headers.Content-Type"] = "default_header";
-  }
-
   const preferredBodyInfo = getPreferredRequestBodyContent(
     endpoint?.requestBody,
   );
   const preferredBodyType = preferredBodyInfo?.mediaType;
   const preferredBody = preferredBodyInfo?.mediaDef;
 
+  if (!result.valid.headers["Content-Type"] && endpoint?.requestBody) {
+    result.valid.headers["Content-Type"] =
+      preferredBodyType || "application/json";
+    result.sourceMap["headers.Content-Type"] = "default_header";
+  }
+
   result.body_style = preferredBodyType || undefined;
-  console.log(
-    "REQUEST BODY DEBUG:",
-    JSON.stringify(
-      {
-        path: endpoint?.path,
-        method: endpoint?.method,
-        preferredBodyType,
-        preferredBodySchema: preferredBody?.schema || null,
-        requestBody: endpoint?.requestBody || null,
-      },
-      null,
-      2,
-    ),
-  );
+
   const resolvedRequestSchema = resolveSchemaRef(
     preferredBody?.schema,
     endpoint,
@@ -717,19 +807,27 @@ export function resolveEndpointTestData(endpoint) {
     result.sourceMap.body = `request_body_${resolvedBody.source}`;
   }
 
+  if (auth === "required" && !result.valid.headers["Authorization"]) {
+    result.valid.headers["Authorization"] = "Bearer <valid_token>";
+    result.sourceMap["headers.Authorization"] = "auth_default";
+  }
+
   for (const group of groups) {
     for (const field of group.fields) {
       const schema = field?.schema || {};
       const fieldName =
         group.key === "headers" ? normalizeHeaderName(field.name) : field.name;
       const validValue = result.valid[group.key][fieldName];
+      const intentPrefix = inferIntentPrefix(group.key, fieldName);
 
       if (field.required) {
         const missingReq = clone(result.valid);
         delete missingReq[group.key][fieldName];
-        result.negative.missingRequired.push({
+
+        pushNegative(result.negative.missingRequired, {
           field: fieldName,
           location: group.key,
+          intent: `missing_required_${intentPrefix}`,
           request: toRequestShape(missingReq),
         });
       }
@@ -738,10 +836,12 @@ export function resolveEndpointTestData(endpoint) {
       if (badType !== undefined) {
         const req = clone(result.valid);
         req[group.key][fieldName] = badType;
-        result.negative.invalidType.push({
+
+        pushNegative(result.negative.invalidType, {
           field: fieldName,
           location: group.key,
           badValue: badType,
+          intent: `invalid_type_${intentPrefix}`,
           request: toRequestShape(req),
         });
       }
@@ -750,10 +850,12 @@ export function resolveEndpointTestData(endpoint) {
       if (badEnum !== undefined) {
         const req = clone(result.valid);
         req[group.key][fieldName] = badEnum;
-        result.negative.invalidEnum.push({
+
+        pushNegative(result.negative.invalidEnum, {
           field: fieldName,
           location: group.key,
           badValue: badEnum,
+          intent: `invalid_enum_${intentPrefix}`,
           request: toRequestShape(req),
         });
       }
@@ -762,10 +864,12 @@ export function resolveEndpointTestData(endpoint) {
       if (badFormat !== undefined) {
         const req = clone(result.valid);
         req[group.key][fieldName] = badFormat;
-        result.negative.invalidFormat.push({
+
+        pushNegative(result.negative.invalidFormat, {
           field: fieldName,
           location: group.key,
           badValue: badFormat,
+          intent: `invalid_format_${intentPrefix}`,
           request: toRequestShape(req),
         });
       }
@@ -779,17 +883,18 @@ export function resolveEndpointTestData(endpoint) {
           location: group.key,
           badValue: boundaryCase.badValue,
           kind: boundaryCase.kind,
+          intent: `${boundaryCase.kind}_${intentPrefix}`,
           request: toRequestShape(req),
         };
 
-        result.negative.boundary.push(item);
+        pushNegative(result.negative.boundary, item);
 
         if (boundaryCase.kind === "above_max_length") {
-          result.negative.stringTooLong.push(item);
+          pushNegative(result.negative.stringTooLong, item);
         }
 
         if (boundaryCase.kind === "above_maximum") {
-          result.negative.numericAboveMaximum.push(item);
+          pushNegative(result.negative.numericAboveMaximum, item);
         }
       }
     }
@@ -798,9 +903,11 @@ export function resolveEndpointTestData(endpoint) {
   if (endpoint?.requestBody?.required) {
     const req = clone(result.valid);
     req.body = undefined;
-    result.negative.missingRequired.push({
+
+    pushNegative(result.negative.missingRequired, {
       field: "request_body",
       location: "body",
+      intent: "missing_required_request_body",
       request: toRequestShape(req),
     });
   }
@@ -810,9 +917,10 @@ export function resolveEndpointTestData(endpoint) {
     resolvedRequestSchema || {},
   )) {
     if (bodyNeg.kind === "body_missing_required_field") {
-      result.negative.missingRequired.push({
+      pushNegative(result.negative.missingRequired, {
         field: bodyNeg.field,
         location: "body",
+        intent: `missing_required_body_${String(bodyNeg.field).toLowerCase()}`,
         request: {
           path_params: clone(result.valid.path),
           query_params: clone(result.valid.query),
@@ -824,10 +932,11 @@ export function resolveEndpointTestData(endpoint) {
     }
 
     if (bodyNeg.kind === "body_null_required_field") {
-      result.negative.nullRequiredField.push({
+      pushNegative(result.negative.nullRequiredField, {
         field: bodyNeg.field,
         location: "body",
         badValue: null,
+        intent: `null_required_body_${String(bodyNeg.field).toLowerCase()}`,
         request: {
           path_params: clone(result.valid.path),
           query_params: clone(result.valid.query),
@@ -837,6 +946,18 @@ export function resolveEndpointTestData(endpoint) {
         },
       });
     }
+  }
+
+  if (auth === "required") {
+    const missingAuthReq = clone(result.valid);
+    delete missingAuthReq.headers.Authorization;
+
+    pushNegative(result.negative.missingRequired, {
+      field: "Authorization",
+      location: "headers",
+      intent: "missing_auth_token",
+      request: toRequestShape(missingAuthReq),
+    });
   }
 
   return result;

@@ -8,22 +8,96 @@
   "properties": {
     "project": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["project_id"],
+      "additionalProperties": false,
+      "required": ["project_id", "project_name", "env"],
       "properties": {
-        "project_id": { "type": "string" },
-        "name": { "type": "string" },
-        "env": { "type": "string" }
-      }
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_url_var": {
+          "type": "string"
+        },
+        "auth_profile": {
+          "type": "string"
+        },
+        "auth_vars": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "anyOf": [{ "required": ["project_name"] }, { "required": ["name"] }]
     },
     "generation": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["mode"],
+      "additionalProperties": false,
+      "required": ["mode", "generated_at"],
       "properties": {
-        "mode": { "type": "string" },
-        "ai": { "type": "boolean" },
-        "generated_at": { "type": "string" }
+        "mode": {
+          "type": "string",
+          "enum": ["strict", "balanced"]
+        },
+        "ai": {
+          "type": "boolean"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "generator_version": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt_version": {
+          "type": "string"
+        },
+        "rag_enabled": {
+          "type": "boolean"
+        },
+        "ai_provider": {
+          "type": "string"
+        },
+        "ai_skipped": {
+          "type": "boolean"
+        },
+        "ai_error": {
+          "type": "string"
+        },
+        "batching": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "batch_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "total_batches": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     },
     "suites": {
@@ -33,14 +107,25 @@
         "additionalProperties": false,
         "required": ["suite_id", "name", "endpoints", "cases"],
         "properties": {
-          "suite_id": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
+          "suite_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
           "endpoints": {
             "type": "array",
-            "items": { "type": "string" }
+            "default": [],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "cases": {
             "type": "array",
+            "minItems": 1,
             "items": {
               "$ref": "./test_case.schema.json"
             }
