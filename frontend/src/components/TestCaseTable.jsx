@@ -78,18 +78,12 @@ export default function TestCaseTable({
             const review = reviewBadge(r.needs_review);
             const typeBadge = badgeForType(r.test_type);
 
-            const endpointUrl =
-              r.api_details?.full_url_resolved ||
-              r.api_details?.full_url_template ||
-              r.api_details?.path ||
-              "";
-
             const endpoint =
               `${r.api_details?.method || ""} ${r.api_details?.path || ""}`.trim();
 
             return (
               <div
-                key={`${r.suite_id}-${r.id}`}
+                key={`${r.suite_id || "suite"}-${r.id}`}
                 style={styles.row}
                 role="button"
                 tabIndex={0}
@@ -98,21 +92,30 @@ export default function TestCaseTable({
                   if (e.key === "Enter" || e.key === " ") onRowClick?.(r);
                 }}
               >
-                <div style={styles.idCell}>{shortText(r.id, 24)}</div>
+                <div style={styles.idCell} title={r.id}>
+                  {r.id?.slice(0, 12) + "..."}
+                </div>
 
                 <div style={styles.titleCell}>
-                  <div style={styles.title}>{shortText(r.title, 90)}</div>
+                  <div style={styles.title} title={r.title}>
+                    {shortText(r.title, 90)}
+                  </div>
 
                   <div style={styles.metaRow}>
-                    <span style={styles.moduleChip}>
-                      {shortText(r.module, 24)}
-                    </span>
+                    {r.module ? (
+                      <span style={styles.moduleChip} title={r.module}>
+                        {shortText(r.module, 24)}
+                      </span>
+                    ) : null}
 
-                    {r.validation_focus?.[0] && (
-                      <span style={styles.focusChip}>
+                    {r.validation_focus?.[0] ? (
+                      <span
+                        style={styles.focusChip}
+                        title={r.validation_focus[0]}
+                      >
                         {shortText(r.validation_focus[0], 28)}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -172,6 +175,9 @@ export default function TestCaseTable({
   );
 }
 
+const GRID_TEMPLATE =
+  "140px minmax(0, 2.6fr) minmax(0, 2.2fr) 110px 90px 120px 110px";
+
 const styles = {
   wrap: {
     display: "grid",
@@ -182,14 +188,15 @@ const styles = {
   tableShell: {
     border: "1px solid #e6eaf2",
     borderRadius: 16,
-    overflow: "hidden",
+    overflowX: "auto",
+    overflowY: "hidden",
     background: "#fff",
     minWidth: 0,
   },
 
   tableHead: {
     display: "grid",
-    gridTemplateColumns: "1fr 2.1fr 2.7fr 0.95fr 0.8fr 1fr 0.85fr",
+    gridTemplateColumns: GRID_TEMPLATE,
     gap: 14,
     padding: "14px 16px",
     background: "#f8fafc",
@@ -199,15 +206,18 @@ const styles = {
     color: "#334155",
     letterSpacing: 0.2,
     textTransform: "uppercase",
+    alignItems: "center",
+    minWidth: 0,
   },
 
   bodyWrap: {
     display: "grid",
+    minWidth: 0,
   },
 
   row: {
     display: "grid",
-    gridTemplateColumns: "1fr 2.1fr 2.7fr 0.95fr 0.8fr 1fr 0.85fr",
+    gridTemplateColumns: GRID_TEMPLATE,
     gap: 14,
     padding: "15px 16px",
     background: "#fff",
@@ -215,40 +225,42 @@ const styles = {
     cursor: "pointer",
     transition: "background 0.15s ease, box-shadow 0.15s ease",
     borderBottom: "1px solid #eef2f7",
+    minWidth: 0,
   },
 
   idCell: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#475569",
+    minWidth: 0,
+    maxWidth: "140px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    display: "block",
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#94a3b8",
+    lineHeight: 1.3,
   },
 
   titleCell: {
     minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
+    paddingLeft: 0,
   },
 
   title: {
     fontSize: 14,
-    fontWeight: 700,
-    color: "#0f172a",
+    fontWeight: 800,
+    color: "#020617",
     marginBottom: 4,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-  },
-
-  subtle: {
-    fontSize: 12,
-    color: "#64748b",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    lineHeight: 1.35,
   },
 
   endpoint: {
+    minWidth: 0,
     fontSize: 13,
     color: "#334155",
     overflow: "hidden",
@@ -256,13 +268,6 @@ const styles = {
     whiteSpace: "nowrap",
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-
-  priority: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#0f172a",
-    textTransform: "capitalize",
   },
 
   badge: {
@@ -274,28 +279,42 @@ const styles = {
     fontWeight: 700,
     whiteSpace: "nowrap",
   },
+
   metaRow: {
     display: "flex",
     gap: 8,
     alignItems: "center",
     flexWrap: "wrap",
+    minWidth: 0,
   },
 
-  module: {
+  moduleChip: {
     fontSize: 11,
     fontWeight: 700,
     color: "#6366f1",
     background: "#eef2ff",
     padding: "2px 8px",
     borderRadius: 999,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
 
-  focus: {
+  focusChip: {
     fontSize: 11,
     color: "#475569",
     background: "#f1f5f9",
     padding: "2px 8px",
     borderRadius: 999,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  priorityWrap: {
+    minWidth: 0,
   },
 
   priorityBadge: (p) => {
@@ -309,12 +328,16 @@ const styles = {
     const cfg = map[p] || map.P2;
 
     return {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
       background: cfg.bg,
       color: cfg.color,
       padding: "5px 10px",
       borderRadius: 999,
       fontWeight: 800,
       fontSize: 12,
+      whiteSpace: "nowrap",
     };
   },
 

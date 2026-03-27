@@ -1,5 +1,8 @@
 import { loadOpenApiDoc } from "./openapiLoader.js";
-import { extractEndpointsFull } from "./openapiParser.js";
+import {
+  extractEndpointsFull,
+  extractEndpointsFullSelected,
+} from "./openapiParser.js";
 import { buildGeneratorPrompt, buildRepairPrompt } from "./prompt.js";
 import { getAIProvider } from "../providers/ai/index.js";
 import { generateCasesForEndpoints } from "./templateEngine.js";
@@ -780,20 +783,15 @@ export async function generateTestPlan(payload) {
     specSourceOverride: payload?.spec_source || null,
   });
 
-  const allEndpointsFull = extractEndpointsFull(doc);
-
   const selected = Array.isArray(payload?.endpoints) ? payload.endpoints : [];
+
+  const allEndpointsFull =
+    selected.length > 0
+      ? extractEndpointsFullSelected(doc, selected)
+      : extractEndpointsFull(doc);
+
   let endpointRecordsFull = allEndpointsFull;
 
-  if (selected.length > 0) {
-    const keyset = new Set(
-      selected.map((e) => `${String(e.method).toUpperCase()} ${e.path}`),
-    );
-
-    endpointRecordsFull = allEndpointsFull.filter((e) =>
-      keyset.has(`${String(e.method).toUpperCase()} ${e.path}`),
-    );
-  }
   if (endpointRecordsFull.length === 0) {
     const err = new Error(
       "No endpoints matched selection. Check OpenAPI or selection payload.",
@@ -803,6 +801,17 @@ export async function generateTestPlan(payload) {
       endpoints_found: allEndpointsFull.length,
     };
     throw err;
+  }
+
+  // 🔥 optional safety cap for large runs when user did not explicitly select endpoints
+  const requestedCount =
+    Number.isFinite(Number(payload?.endpoints_n)) &&
+    Number(payload.endpoints_n) > 0
+      ? Number(payload.endpoints_n)
+      : 0;
+
+  if (selected.length === 0 && requestedCount > 0) {
+    endpointRecordsFull = endpointRecordsFull.slice(0, requestedCount);
   }
 
   const generationMode = getManualSafetyMode(payload);
@@ -845,11 +854,11 @@ export async function generateTestPlan(payload) {
     throw err;
   }
 
-  console.log("GENERATOR ENDPOINTS COUNT:", allEndpointsFull.length);
+  console.log("GENERATOR ENDPOINTS COUNT:", endpointRecordsFull.length);
   console.log("SELECTED ENDPOINTS COUNT:", selected.length);
   console.log(
     "SAMPLE ENDPOINTS:",
-    allEndpointsFull
+    endpointRecordsFull
       .slice(0, 5)
       .map((e) => `${String(e.method).toUpperCase()} ${e.path}`),
   );
@@ -866,7 +875,6 @@ export async function generateTestPlan(payload) {
   };
 
   const options = { include, env, auth_profile, guidance };
-
   const prompt = buildGeneratorPrompt({
     project: projectBlock,
     options,
@@ -875,9 +883,10 @@ export async function generateTestPlan(payload) {
   });
 
   let obj = null;
+  const BATCH_SIZE = 5; // 🔥 reduce memory pressure
 
-  const BATCH_SIZE = 15;
   const endpointBatches = chunkArray(eligibleEndpointRecords, BATCH_SIZE);
+
   console.log("TOTAL ENDPOINTS:", eligibleEndpointRecords.length);
   console.log("TOTAL BATCHES:", endpointBatches.length);
 
@@ -892,7 +901,7 @@ export async function generateTestPlan(payload) {
 
     const batchCaseIdGen = createCaseIdGenerator(batch);
 
-    const batchPlan = await buildDeterministicTestPlan({
+    let batchPlan = await buildDeterministicTestPlan({
       project: projectBlock,
       options,
       endpoints: batch,
@@ -900,12 +909,26 @@ export async function generateTestPlan(payload) {
       fallbackBaseUrl,
     });
 
-    let batchObj = batchPlan;
+    batchPlan = enrichSuitesWithCaseIds(batchPlan, batch, fallbackBaseUrl);
 
-    batchObj = enrichSuitesWithCaseIds(batchObj, batch, fallbackBaseUrl);
-    //batchObj = applyResponseAwareCaseNormalization(batchObj, batch);
-    //batchObj = filterGeneratedPlanToEligibleEndpoints(batchObj, batch);
-    mergedSuites.push(...(batchObj.suites || []));
+    // 🚀 merge only required data
+    if (Array.isArray(batchPlan?.suites)) {
+      mergedSuites.push(...batchPlan.suites);
+    }
+
+    // 🔥 MEMORY LOGGING (very important)
+    const mem = process.memoryUsage();
+    console.log(`MEMORY AFTER BATCH ${i + 1}:`, {
+      rss_mb: Math.round(mem.rss / 1024 / 1024),
+      heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
+      heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+    });
+
+    // 🔥 release references
+    batchPlan = null;
+
+    // 🔥 allow GC to run
+    await new Promise((resolve) => setImmediate(resolve));
   }
 
   const deterministic = {

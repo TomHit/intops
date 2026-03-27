@@ -17,12 +17,24 @@ function normalizeInclude(include) {
    DEDUP KEY
 ========================= */
 function buildDedupKey(tc) {
+  const bodyKeys = Object.keys(tc?.test_data?.request_body || {})
+    .sort()
+    .join(",");
+  const queryKeys = Object.keys(tc?.test_data?.query_params || {})
+    .sort()
+    .join(",");
+  const pathKeys = Object.keys(tc?.test_data?.path_params || {})
+    .sort()
+    .join(",");
+
   return [
     tc?.api_details?.method,
     tc?.api_details?.path,
     tc?.test_type,
     tc?.title,
-    JSON.stringify(tc?.test_data || {}),
+    bodyKeys,
+    queryKeys,
+    pathKeys,
   ]
     .map((x) =>
       String(x || "")
@@ -31,7 +43,6 @@ function buildDedupKey(tc) {
     )
     .join("|");
 }
-
 /* =========================
    MAIN ENGINE
 ========================= */

@@ -147,6 +147,110 @@ function getResponseRequiredFields(endpoint) {
   return Array.isArray(schema?.required) ? schema.required.slice(0, 10) : [];
 }
 
+function flattenSchemaFields(
+  schema,
+  prefix = "",
+  depth = 0,
+  limit = 20,
+  out = [],
+) {
+  if (!isObject(schema) || depth > 3 || out.length >= limit) return out;
+
+  const normalized = normalizeResponseSchema(schema) || schema;
+  const props = getSchemaProperties(normalized);
+
+  for (const [key, fieldSchema] of Object.entries(props)) {
+    if (out.length >= limit) break;
+
+    const path = prefix ? `${prefix}.${key}` : key;
+    const type = lower(fieldSchema?.type) || "unknown";
+
+    out.push({
+      path,
+      type,
+      format: fieldSchema?.format || null,
+      required: ensureArray(normalized?.required).includes(key),
+      isArray: type === "array",
+      isObject: type === "object" || isObject(fieldSchema?.properties),
+    });
+
+    if (type === "object" || isObject(fieldSchema?.properties)) {
+      flattenSchemaFields(fieldSchema, path, depth + 1, limit, out);
+    } else if (type === "array" && isObject(fieldSchema?.items)) {
+      const itemType = lower(fieldSchema.items?.type) || "unknown";
+      out.push({
+        path: `${path}[]`,
+        type: itemType,
+        format: fieldSchema.items?.format || null,
+        required: false,
+        isArray: true,
+        isObject:
+          itemType === "object" || isObject(fieldSchema.items?.properties),
+      });
+
+      if (itemType === "object" || isObject(fieldSchema.items?.properties)) {
+        flattenSchemaFields(
+          fieldSchema.items,
+          `${path}[]`,
+          depth + 1,
+          limit,
+          out,
+        );
+      }
+    }
+  }
+
+  return out;
+}
+
+function getResponseSchemaSummary(endpoint) {
+  const schema = getResponseSchema(endpoint);
+  const normalized = normalizeResponseSchema(schema);
+  const flat = flattenSchemaFields(normalized);
+
+  return {
+    top_level_fields: flat
+      .filter((f) => !f.path.includes(".") && !f.path.includes("[]"))
+      .map((f) => f.path)
+      .slice(0, 8),
+    nested_fields: flat
+      .filter((f) => f.path.includes("."))
+      .map((f) => f.path)
+      .slice(0, 8),
+    array_fields: flat
+      .filter((f) => f.isArray)
+      .map((f) => f.path)
+      .slice(0, 8),
+    typed_fields: flat
+      .map((f) => `${f.path}:${f.type}${f.format ? `(${f.format})` : ""}`)
+      .slice(0, 12),
+  };
+}
+
+function getRequestSchemaSummary(endpoint, profile = {}) {
+  const schema = getRequestBodySchema(endpoint, profile);
+  const normalized = normalizeResponseSchema(schema);
+  const flat = flattenSchemaFields(normalized);
+
+  return {
+    top_level_fields: flat
+      .filter((f) => !f.path.includes(".") && !f.path.includes("[]"))
+      .map((f) => f.path)
+      .slice(0, 8),
+    nested_fields: flat
+      .filter((f) => f.path.includes("."))
+      .map((f) => f.path)
+      .slice(0, 8),
+    array_fields: flat
+      .filter((f) => f.isArray)
+      .map((f) => f.path)
+      .slice(0, 8),
+    typed_fields: flat
+      .map((f) => `${f.path}:${f.type}${f.format ? `(${f.format})` : ""}`)
+      .slice(0, 12),
+  };
+}
+
 function getSchemaProperties(schema) {
   return schema?.properties && typeof schema.properties === "object"
     ? schema.properties
@@ -236,25 +340,48 @@ function sampleValidValue(fieldName, fieldSchema = {}) {
 
   return `<${name || "value"}>`;
 }
-function buildValidBodyFromSchema(schema, mode = "full") {
+function buildValidBodyFromSchema(
+  schema,
+  mode = "full",
+  depth = 0,
+  seen = new WeakSet(),
+) {
   if (!isObject(schema)) return {};
+  if (depth > 4) return {};
+  if (seen.has(schema)) return {};
+  seen.add(schema);
 
   const props = getSchemaProperties(schema);
   const required = ensureArray(schema?.required);
   const body = {};
 
-  for (const [key, propSchema] of Object.entries(props)) {
+  let entries = Object.entries(props);
+
+  // keep full payload realistic but bounded
+  if (mode === "full" && entries.length > 8) {
+    entries = entries.slice(0, 8);
+  }
+
+  for (const [key, propSchema] of entries) {
     if (mode === "minimal" && !required.includes(key)) continue;
-    body[key] = buildSchemaSampleValue(key, propSchema, mode);
+    body[key] = buildSchemaSampleValue(key, propSchema, mode, depth + 1, seen);
   }
 
   return body;
 }
 
-function buildSchemaSampleValue(fieldName, fieldSchema = {}, mode = "full") {
+function buildSchemaSampleValue(
+  fieldName,
+  fieldSchema = {},
+  mode = "full",
+  depth = 0,
+  seen = new WeakSet(),
+) {
   const name = lower(fieldName);
 
-  if (!isObject(fieldSchema)) return "<value>";
+  if (!isObject(fieldSchema)) return `<${name || "value"}>`;
+  if (depth > 4) return `<${name || "value"}>`;
+  if (seen.has(fieldSchema)) return `<${name || "value"}>`;
 
   if (fieldSchema.example !== undefined) return clone(fieldSchema.example);
   if (fieldSchema.default !== undefined) return clone(fieldSchema.default);
@@ -268,35 +395,29 @@ function buildSchemaSampleValue(fieldName, fieldSchema = {}, mode = "full") {
   }
 
   if (fieldSchema.type === "object" || isObject(fieldSchema.properties)) {
-    return buildValidBodyFromSchema(fieldSchema, mode);
+    return buildValidBodyFromSchema(fieldSchema, mode, depth + 1, seen);
   }
 
   if (fieldSchema.type === "array") {
     const itemSchema = isObject(fieldSchema.items) ? fieldSchema.items : {};
-
-    if (mode === "minimal") {
-      return [buildSchemaSampleValue(`${fieldName}_item`, itemSchema, mode)];
-    }
-
     return [
-      buildSchemaSampleValue(`${fieldName}_item_1`, itemSchema, mode),
-      buildSchemaSampleValue(`${fieldName}_item_2`, itemSchema, mode),
+      buildSchemaSampleValue(
+        `${fieldName}_item`,
+        itemSchema,
+        mode,
+        depth + 1,
+        seen,
+      ),
     ];
   }
 
   if (fieldSchema.type === "integer") {
     if (typeof fieldSchema.minimum === "number") return fieldSchema.minimum;
-    if (typeof fieldSchema.maximum === "number" && fieldSchema.maximum >= 1) {
-      return 1;
-    }
     return 1;
   }
 
   if (fieldSchema.type === "number") {
     if (typeof fieldSchema.minimum === "number") return fieldSchema.minimum;
-    if (typeof fieldSchema.maximum === "number" && fieldSchema.maximum >= 1) {
-      return 1;
-    }
     return 1.23;
   }
 
@@ -315,7 +436,7 @@ function buildSchemaSampleValue(fieldName, fieldSchema = {}, mode = "full") {
       typeof fieldSchema.minLength === "number" &&
       fieldSchema.minLength > 0
     ) {
-      return "x".repeat(fieldSchema.minLength);
+      return "x".repeat(Math.min(fieldSchema.minLength, 8));
     }
     return `<${name || "string"}>`;
   }
@@ -484,6 +605,23 @@ function getAllStringMaxLengthFields(schema) {
     .map(([name, fieldSchema]) => ({ name, schema: fieldSchema }));
 }
 
+function getAllNumericConstraintFields(schema) {
+  const props = getSchemaProperties(schema);
+
+  return Object.entries(props)
+    .filter(([, fieldSchema]) => {
+      const type = lower(fieldSchema?.type);
+      return (
+        (type === "integer" || type === "number") &&
+        (fieldSchema?.minimum !== undefined ||
+          fieldSchema?.maximum !== undefined)
+      );
+    })
+    .map(([name, fieldSchema]) => ({
+      name,
+      schema: fieldSchema,
+    }));
+}
 function getAllNumericMaximumFields(schema) {
   const props = getSchemaProperties(schema);
   return Object.entries(props)
@@ -496,6 +634,98 @@ function getAllNumericMaximumFields(schema) {
     .map(([name, fieldSchema]) => ({ name, schema: fieldSchema }));
 }
 
+function getAllTypedBodyFields(schema) {
+  const props = getSchemaProperties(schema);
+
+  return Object.entries(props)
+    .filter(([, fieldSchema]) => {
+      const type = lower(fieldSchema?.type);
+      return [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "array",
+        "object",
+      ].includes(type);
+    })
+    .map(([name, fieldSchema]) => ({
+      name,
+      schema: fieldSchema,
+      source: "body",
+    }));
+}
+
+function buildInvalidTypeValue(fieldSchema = {}, fieldName = "value") {
+  const type = lower(fieldSchema?.type);
+  const name = lower(fieldName);
+
+  if (type === "string") return 999;
+  if (type === "integer") return "not-an-integer";
+  if (type === "number") return "not-a-number";
+  if (type === "boolean") return "not-a-boolean";
+  if (type === "array") return "not-an-array";
+  if (type === "object") return `not-an-object-${name || "value"}`;
+
+  return "__invalid_type_value__";
+}
+
+function buildInvalidEnumValue(fieldSchema = {}, fieldName = "value") {
+  const enumValues = Array.isArray(fieldSchema?.enum) ? fieldSchema.enum : [];
+  const type = lower(fieldSchema?.type);
+  const name = lower(fieldName);
+
+  if (type === "integer" || type === "number") {
+    const numericEnums = enumValues.filter((v) => typeof v === "number");
+    if (numericEnums.length > 0) {
+      return Math.max(...numericEnums) + 999;
+    }
+    return 999999;
+  }
+
+  if (type === "boolean") {
+    return "not-a-boolean";
+  }
+
+  if (name.includes("status")) return "__invalid_status__";
+  if (name.includes("type")) return "__invalid_type__";
+  if (name.includes("role")) return "__invalid_role__";
+
+  return "__invalid_enum_value__";
+}
+
+function getAllEnumFieldsFromQuery(endpoint) {
+  return ensureArray(endpoint?.params?.query)
+    .filter(
+      (p) =>
+        Array.isArray(p?.schema?.enum) && p.schema.enum.length > 0 && p?.name,
+    )
+    .map((p) => ({
+      name: p.name,
+      schema: p.schema,
+      source: "query",
+    }));
+}
+
+function getAllEnumFieldsFromPath(endpoint) {
+  return ensureArray(endpoint?.params?.path)
+    .filter(
+      (p) =>
+        Array.isArray(p?.schema?.enum) && p.schema.enum.length > 0 && p?.name,
+    )
+    .map((p) => ({
+      name: p.name,
+      schema: p.schema,
+      source: "path",
+    }));
+}
+
+function getAllEnumFieldsFromBody(schema) {
+  return getAllEnumFields(schema).map((entry) => ({
+    ...entry,
+    source: "body",
+  }));
+}
 function uniquePlans(plans = []) {
   const seen = new Set();
   const out = [];
@@ -541,6 +771,22 @@ function buildContractPlans(endpoint, profile) {
   const plans = [];
   const successStatuses = getSuccessStatusCandidates(endpoint);
 
+  // 🔍 Extract response schema hints (generic, NOT hardcoded)
+  const responses = endpoint?.responses || {};
+  const firstSuccess = successStatuses?.[0];
+
+  const responseSchema =
+    responses?.[firstSuccess]?.content?.["application/json"]?.schema;
+
+  const responseFields = responseSchema?.properties
+    ? Object.keys(responseSchema.properties).slice(0, 5)
+    : [];
+
+  const contentTypes = Object.keys(responses?.[firstSuccess]?.content || {});
+
+  /* =========================
+     SUCCESS (ENHANCED)
+  ========================= */
   plans.push(
     makePlan({
       scenario_id: "contract.success",
@@ -548,39 +794,72 @@ function buildContractPlans(endpoint, profile) {
       template_key: null,
       invalidate: null,
       keep_valid: { all: true },
+
       expected_outcome_family: "success",
       expected_status_candidates: successStatuses,
-      spec_evidence: { source: "responses.2xx" },
+
+      // 🔥 NEW: richer metadata
+      spec_evidence: {
+        source: "responses.2xx",
+        primary_status: firstSuccess,
+        response_fields: responseFields,
+        content_types: contentTypes,
+      },
     }),
   );
 
-  plans.push(
-    makePlan({
-      scenario_id: "contract.status_code",
-      test_type: "contract",
-      template_key: null,
-      invalidate: null,
-      keep_valid: { all: true },
-      expected_outcome_family: "success",
-      expected_status_candidates: successStatuses,
-      spec_evidence: { source: "responses.status" },
-    }),
-  );
+  /* =========================
+     STATUS CODE (MULTI)
+  ========================= */
+  for (const code of successStatuses) {
+    plans.push(
+      makePlan({
+        scenario_id: "contract.status_code",
+        test_type: "contract",
+        template_key: null,
+        invalidate: null,
+        keep_valid: { all: true },
 
-  plans.push(
-    makePlan({
-      scenario_id: "contract.content_type",
-      test_type: "contract",
-      template_key: null,
-      invalidate: null,
-      keep_valid: { all: true },
-      expected_outcome_family: "success",
-      expected_status_candidates: successStatuses,
-      spec_evidence: { source: "responses.content" },
-    }),
-  );
+        expected_outcome_family: "success",
+        expected_status_candidates: [code],
 
-  if (getResponseRequiredFields(endpoint).length > 0) {
+        spec_evidence: {
+          source: "responses.status",
+          status: code,
+        },
+      }),
+    );
+  }
+
+  /* =========================
+     CONTENT TYPE (ENHANCED)
+  ========================= */
+  if (contentTypes.length > 0) {
+    plans.push(
+      makePlan({
+        scenario_id: "contract.content_type",
+        test_type: "contract",
+        template_key: null,
+        invalidate: null,
+        keep_valid: { all: true },
+
+        expected_outcome_family: "success",
+        expected_status_candidates: successStatuses,
+
+        spec_evidence: {
+          source: "responses.content",
+          content_types: contentTypes,
+        },
+      }),
+    );
+  }
+
+  /* =========================
+     REQUIRED RESPONSE FIELDS
+  ========================= */
+  const requiredFields = getResponseRequiredFields(endpoint);
+
+  if (requiredFields.length > 0) {
     plans.push(
       makePlan({
         scenario_id: "contract.required_fields",
@@ -588,13 +867,21 @@ function buildContractPlans(endpoint, profile) {
         template_key: null,
         invalidate: null,
         keep_valid: { all: true },
+
         expected_outcome_family: "success",
         expected_status_candidates: successStatuses,
-        spec_evidence: { source: "response.required" },
+
+        spec_evidence: {
+          source: "response.required",
+          required_fields: requiredFields.slice(0, 5),
+        },
       }),
     );
   }
 
+  /* =========================
+     REQUEST BODY VALIDATION
+  ========================= */
   if (hasRequestSchema(endpoint, profile)) {
     plans.push(
       makePlan({
@@ -603,16 +890,20 @@ function buildContractPlans(endpoint, profile) {
         template_key: null,
         invalidate: null,
         keep_valid: { all: true },
+
         expected_outcome_family: "success",
         expected_status_candidates: successStatuses,
-        spec_evidence: { source: "requestBody" },
+
+        spec_evidence: {
+          source: "requestBody",
+          has_body: true,
+        },
       }),
     );
   }
 
   return plans;
 }
-
 function buildSchemaPlans(endpoint, profile) {
   const plans = [];
   const responseSchema = getResponseSchema(endpoint);
@@ -621,6 +912,9 @@ function buildSchemaPlans(endpoint, profile) {
 
   // Primary path: response schema exists
   if (responseSchema && typeof responseSchema === "object") {
+    const summary = getResponseSchemaSummary(endpoint);
+    const requiredFields = getResponseRequiredFields(endpoint);
+
     plans.push(
       makePlan({
         scenario_id: "schema.response",
@@ -630,11 +924,17 @@ function buildSchemaPlans(endpoint, profile) {
         keep_valid: { all: true },
         expected_outcome_family: "success",
         expected_status_candidates: successStatuses,
-        spec_evidence: { source: "response.schema" },
+        spec_evidence: {
+          source: "response.schema",
+          top_level_fields: summary.top_level_fields,
+          nested_fields: summary.nested_fields,
+          array_fields: summary.array_fields,
+          typed_fields: summary.typed_fields,
+        },
       }),
     );
 
-    if (getResponseRequiredFields(endpoint).length > 0) {
+    if (requiredFields.length > 0) {
       plans.push(
         makePlan({
           scenario_id: "schema.required_fields",
@@ -644,12 +944,16 @@ function buildSchemaPlans(endpoint, profile) {
           keep_valid: { all: true },
           expected_outcome_family: "success",
           expected_status_candidates: successStatuses,
-          spec_evidence: { source: "response.required" },
+          spec_evidence: {
+            source: "response.required",
+            required_fields: requiredFields,
+            nested_fields: summary.nested_fields,
+          },
         }),
       );
     }
 
-    if (getTopLevelResponseFields(endpoint).length > 0) {
+    if (summary.typed_fields.length > 0) {
       plans.push(
         makePlan({
           scenario_id: "schema.field_types",
@@ -659,7 +963,12 @@ function buildSchemaPlans(endpoint, profile) {
           keep_valid: { all: true },
           expected_outcome_family: "success",
           expected_status_candidates: successStatuses,
-          spec_evidence: { source: "response.properties" },
+          spec_evidence: {
+            source: "response.properties",
+            typed_fields: summary.typed_fields,
+            array_fields: summary.array_fields,
+            nested_fields: summary.nested_fields,
+          },
         }),
       );
     }
@@ -669,6 +978,9 @@ function buildSchemaPlans(endpoint, profile) {
 
   // Fallback path: no response schema, but request body schema exists
   if (requestSchema && typeof requestSchema === "object") {
+    const summary = getRequestSchemaSummary(endpoint, profile);
+    const requiredFields = ensureArray(requestSchema?.required);
+
     plans.push(
       makePlan({
         scenario_id: "schema.request_body",
@@ -678,11 +990,17 @@ function buildSchemaPlans(endpoint, profile) {
         keep_valid: { all: true },
         expected_outcome_family: "success",
         expected_status_candidates: successStatuses,
-        spec_evidence: { source: "request.schema" },
+        spec_evidence: {
+          source: "request.schema",
+          top_level_fields: summary.top_level_fields,
+          nested_fields: summary.nested_fields,
+          array_fields: summary.array_fields,
+          typed_fields: summary.typed_fields,
+        },
       }),
     );
 
-    if (ensureArray(requestSchema?.required).length > 0) {
+    if (requiredFields.length > 0) {
       plans.push(
         makePlan({
           scenario_id: "schema.request_required_fields",
@@ -692,12 +1010,16 @@ function buildSchemaPlans(endpoint, profile) {
           keep_valid: { all: true },
           expected_outcome_family: "success",
           expected_status_candidates: successStatuses,
-          spec_evidence: { source: "request.required" },
+          spec_evidence: {
+            source: "request.required",
+            required_fields: requiredFields,
+            nested_fields: summary.nested_fields,
+          },
         }),
       );
     }
 
-    if (Object.keys(getSchemaProperties(requestSchema)).length > 0) {
+    if (summary.typed_fields.length > 0) {
       plans.push(
         makePlan({
           scenario_id: "schema.request_field_types",
@@ -707,7 +1029,12 @@ function buildSchemaPlans(endpoint, profile) {
           keep_valid: { all: true },
           expected_outcome_family: "success",
           expected_status_candidates: successStatuses,
-          spec_evidence: { source: "request.properties" },
+          spec_evidence: {
+            source: "request.properties",
+            typed_fields: summary.typed_fields,
+            array_fields: summary.array_fields,
+            nested_fields: summary.nested_fields,
+          },
         }),
       );
     }
@@ -901,18 +1228,65 @@ function buildAutoPlansFromResolved(endpoint, profile) {
       }),
     );
   }
+  const enumFields = [
+    ...getAllEnumFieldsFromQuery(endpoint),
+    ...getAllEnumFieldsFromPath(endpoint),
+    ...getAllEnumFieldsFromBody(requestBodySchema),
+  ];
 
-  const enumFields = getAllEnumFields(requestBodySchema);
   for (const ef of enumFields) {
+    const invalidValue = buildInvalidEnumValue(ef.schema, ef.name);
+
     autoPlans.push(
       makePlan({
         scenario_id: `negative.invalid_enum:${ef.name}`,
         test_type: "negative",
         template_key: "negative.invalid_enum",
         invalidate: {
-          location: "body",
+          location: ef.source,
           field: ef.name,
           mode: "invalid_enum",
+          invalid_value: invalidValue,
+        },
+        keep_valid: {
+          auth: true,
+          path: true,
+          query: true,
+          body: true,
+          body_other_than_target: true,
+          query_other_than_target: true,
+          path_other_than_target: true,
+        },
+        expected_outcome_family: "validation_failure",
+        expected_status_candidates: ["400", "422"],
+        field_target: ef.name,
+        spec_evidence: {
+          source:
+            ef.source === "body"
+              ? "requestBody.enum"
+              : `endpoint.params.${ef.source}.enum`,
+          enum_source: ef.source,
+          enum_values: Array.isArray(ef.schema?.enum)
+            ? clone(ef.schema.enum)
+            : [],
+          invalid_value: invalidValue,
+          field_type: ef.schema?.type || null,
+        },
+      }),
+    );
+  }
+
+  const requiredFields = ensureArray(requestBodySchema?.required);
+  for (const field of requiredFields) {
+    autoPlans.push(
+      makePlan({
+        scenario_id: `negative.missing_required_body_field:${field}`,
+        test_type: "negative",
+        template_key: "negative.missing_required_body_field",
+        invalidate: {
+          location: "body",
+          field,
+          mode: "missing_required_field",
         },
         keep_valid: {
           auth: true,
@@ -922,14 +1296,16 @@ function buildAutoPlansFromResolved(endpoint, profile) {
         },
         expected_outcome_family: "validation_failure",
         expected_status_candidates: ["400", "422"],
-        field_target: ef.name,
-        spec_evidence: { source: "requestBody.enum" },
+        field_target: field,
+        spec_evidence: {
+          source: "requestBody.required",
+          missing_field: field,
+          required_fields: clone(requiredFields),
+          field_schema: clone(requestBodySchema?.properties?.[field] || {}),
+        },
       }),
     );
-  }
 
-  const requiredFields = ensureArray(requestBodySchema?.required);
-  for (const field of requiredFields) {
     autoPlans.push(
       makePlan({
         scenario_id: `negative.null_required_field:${field}`,
@@ -949,9 +1325,115 @@ function buildAutoPlansFromResolved(endpoint, profile) {
         expected_outcome_family: "validation_failure",
         expected_status_candidates: ["400", "422"],
         field_target: field,
-        spec_evidence: { source: "requestBody.required" },
+        spec_evidence: {
+          source: "requestBody.required",
+          missing_field: field,
+          required_fields: clone(requiredFields),
+          field_schema: clone(requestBodySchema?.properties?.[field] || {}),
+        },
       }),
     );
+  }
+
+  const typedFields = getAllTypedBodyFields(requestBodySchema);
+  for (const tf of typedFields) {
+    const invalidValue = buildInvalidTypeValue(tf.schema, tf.name);
+
+    autoPlans.push(
+      makePlan({
+        scenario_id: `negative.invalid_type:${tf.name}`,
+        test_type: "negative",
+        template_key: "negative.invalid_type",
+        invalidate: {
+          location: "body",
+          field: tf.name,
+          mode: "invalid_type",
+          invalid_value: invalidValue,
+        },
+        keep_valid: {
+          auth: true,
+          path: true,
+          query: true,
+          body_other_than_target: true,
+        },
+        expected_outcome_family: "validation_failure",
+        expected_status_candidates: ["400", "422"],
+        field_target: tf.name,
+        spec_evidence: {
+          source: "requestBody.type",
+          field_type: tf.schema?.type || null,
+          invalid_value: invalidValue,
+          field_schema: clone(tf.schema || {}),
+        },
+      }),
+    );
+  }
+
+  const numericFields = getAllNumericConstraintFields(requestBodySchema);
+
+  for (const nf of numericFields) {
+    const min = nf.schema?.minimum;
+    const max = nf.schema?.maximum;
+
+    if (min !== undefined) {
+      autoPlans.push(
+        makePlan({
+          scenario_id: `negative.below_minimum:${nf.name}`,
+          test_type: "negative",
+          template_key: "negative.below_minimum",
+          invalidate: {
+            location: "body",
+            field: nf.name,
+            mode: "below_minimum",
+            invalid_value: min - 1,
+          },
+          keep_valid: {
+            auth: true,
+            path: true,
+            query: true,
+            body_other_than_target: true,
+          },
+          expected_outcome_family: "validation_failure",
+          expected_status_candidates: ["400", "422"],
+          field_target: nf.name,
+          spec_evidence: {
+            minimum: min,
+            invalid_value: min - 1,
+            field_schema: clone(nf.schema),
+          },
+        }),
+      );
+    }
+
+    if (max !== undefined) {
+      autoPlans.push(
+        makePlan({
+          scenario_id: `negative.above_maximum:${nf.name}`,
+          test_type: "negative",
+          template_key: "negative.above_maximum",
+          invalidate: {
+            location: "body",
+            field: nf.name,
+            mode: "above_maximum",
+            invalid_value: max + 1,
+          },
+          keep_valid: {
+            auth: true,
+            path: true,
+            query: true,
+            body_other_than_target: true,
+          },
+          expected_outcome_family: "validation_failure",
+          expected_status_candidates: ["400", "422"],
+          field_target: nf.name,
+          spec_evidence: {
+            maximum: max,
+            invalid_value: max + 1,
+            field_schema: clone(nf.schema),
+          },
+        }),
+      );
+    }
   }
 
   const formatFields = getAllFormatFields(requestBodySchema);
@@ -1005,33 +1487,6 @@ function buildAutoPlansFromResolved(endpoint, profile) {
       }),
     );
   }
-
-  const numericFields = getAllNumericMaximumFields(requestBodySchema);
-  for (const nf of numericFields) {
-    autoPlans.push(
-      makePlan({
-        scenario_id: `negative.numeric_above_maximum:${nf.name}`,
-        test_type: "negative",
-        template_key: "negative.numeric_above_maximum",
-        invalidate: {
-          location: "body",
-          field: nf.name,
-          mode: "numeric_above_maximum",
-        },
-        keep_valid: {
-          auth: true,
-          path: true,
-          query: true,
-          body_other_than_target: true,
-        },
-        expected_outcome_family: "validation_failure",
-        expected_status_candidates: ["400", "422"],
-        field_target: nf.name,
-        spec_evidence: { source: "requestBody.maximum" },
-      }),
-    );
-  }
-
   return autoPlans;
 }
 
@@ -1042,66 +1497,204 @@ export function buildScenarioPlans(endpoint, profile, rules = []) {
 
   return uniquePlans([...contractPlans, ...schemaPlans, ...negativeAuthPlans]);
 }
+function getEndpointActionLabel(endpoint) {
+  const method = normalizeMethod(endpoint?.method);
+  const path = lower(endpoint?.path || "");
+  const summary = lower(endpoint?.summary || endpoint?.operationId || "");
+
+  if (summary.includes("create") || summary.includes("add")) {
+    return "Create resource";
+  }
+
+  if (summary.includes("update") || method === "PUT" || method === "PATCH") {
+    return "Update resource";
+  }
+
+  if (summary.includes("delete") || method === "DELETE") {
+    return "Delete resource";
+  }
+
+  if (summary.includes("list") || summary.includes("search")) {
+    return "Retrieve resource list";
+  }
+
+  if (method === "POST") {
+    if (path.includes("/search")) return "Search resource";
+    return "Create resource";
+  }
+
+  if (method === "GET") {
+    return path.includes("{")
+      ? "Retrieve resource details"
+      : "Retrieve resource";
+  }
+
+  if (method === "PUT" || method === "PATCH") {
+    return "Update resource";
+  }
+
+  if (method === "DELETE") {
+    return "Delete resource";
+  }
+
+  return "Process request";
+}
 
 function buildScenarioTitle(endpoint, plan) {
-  const path = endpoint?.path || "";
   const method = normalizeMethod(endpoint?.method);
+  const path = endpoint?.path || "/";
   const field = plan.field_target || scenarioSuffix(plan) || "field";
   const family = scenarioFamily(plan);
 
+  const action = getEndpointActionLabel(endpoint);
+
   switch (family) {
-    case "auth.missing_credentials":
-      return `Reject ${method} ${path} when authentication is missing`;
-    case "auth.invalid_credentials":
-      return `Reject ${method} ${path} when authentication is invalid`;
-    case "negative.missing_required_query":
-      return `Reject ${method} ${path} when query parameter '${field}' is missing`;
-    case "negative.missing_required_path":
-      return `Reject ${method} ${path} when path parameter '${field}' is invalid`;
-    case "negative.invalid_enum":
-      return `Reject ${method} ${path} when '${field}' has an invalid enum value`;
-    case "negative.null_required_field":
-      return `Reject ${method} ${path} when required field '${field}' is null`;
-    case "negative.invalid_format":
-      return `Reject ${method} ${path} when '${field}' has invalid format`;
-    case "negative.string_too_long":
-      return `Reject ${method} ${path} when '${field}' exceeds maximum length`;
-    case "negative.numeric_above_maximum":
-      return `Reject ${method} ${path} when '${field}' exceeds allowed value`;
-    case "negative.empty_body":
-      return `Reject ${method} ${path} when request body is missing`;
-    case "negative.unsupported_content_type":
-      return `Reject ${method} ${path} when Content-Type is unsupported`;
-    case "success.min_payload":
-      return `Verify ${method} ${path} accepts the minimal valid payload`;
-    case "success.full_payload":
-      return `Verify ${method} ${path} accepts the full valid payload`;
-    case "contract.success":
-      return `Verify successful response for ${method} ${path}`;
-    case "contract.status_code":
-      return `Verify documented success status for ${method} ${path}`;
-    case "contract.content_type":
-      return `Verify response content type for ${method} ${path}`;
-    case "contract.required_fields":
-      return `Verify mandatory response fields for ${method} ${path}`;
+    case "contract.success": {
+      const primaryStatus =
+        plan?.spec_evidence?.primary_status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+      const responseFields = ensureArray(plan?.spec_evidence?.response_fields);
+
+      return responseFields.length > 0
+        ? `[Success] ${method} ${path} returns ${primaryStatus} with fields ${responseFields.join(", ")}`
+        : `[Success] ${method} ${path} returns ${primaryStatus}`;
+    }
+
+    case "contract.status_code": {
+      const status =
+        plan?.spec_evidence?.status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+
+      return `[Status] ${method} ${path} returns documented status ${status}`;
+    }
+
+    case "contract.content_type": {
+      const contentTypes = ensureArray(plan?.spec_evidence?.content_types);
+
+      return contentTypes.length > 0
+        ? `[Content-Type] ${method} ${path} returns ${contentTypes.join(" or ")}`
+        : `[Content-Type] Validate response format – ${method} ${path}`;
+    }
+
+    case "contract.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `[Fields] ${method} ${path} returns required fields ${requiredFields.join(", ")}`
+        : `[Fields] Validate required response fields – ${method} ${path}`;
+    }
+
     case "contract.request_body":
-      return `Verify valid request body is accepted for ${method} ${path}`;
-    case "schema.response":
-      return `Validate response schema for ${method} ${path}`;
-    case "schema.required_fields":
-      return `Validate required response fields for ${method} ${path}`;
-    case "schema.field_types":
-      return `Validate response field types for ${method} ${path}`;
-    case "schema.request_body":
-      return `Validate request schema for ${method} ${path}`;
+      return `[Request] ${method} ${path} accepts valid documented payload`;
 
-    case "schema.request_required_fields":
-      return `Validate required request fields for ${method} ${path}`;
+    case "schema.response": {
+      const topFields = ensureArray(plan?.spec_evidence?.top_level_fields);
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
 
-    case "schema.request_field_types":
-      return `Validate request field types for ${method} ${path}`;
+      return nestedFields.length > 0
+        ? `[Schema] ${method} ${path} returns structured response with nested fields`
+        : topFields.length > 0
+          ? `[Schema] ${method} ${path} returns fields ${topFields.join(", ")}`
+          : `[Schema] Validate response structure – ${method} ${path}`;
+    }
+
+    case "schema.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `[Schema] ${method} ${path} returns required fields ${requiredFields.join(", ")}`
+        : `[Schema] Validate required fields – ${method} ${path}`;
+    }
+
+    case "schema.field_types": {
+      const typedFields = ensureArray(plan?.spec_evidence?.typed_fields);
+
+      return typedFields.length > 0
+        ? `[Schema] ${method} ${path} validates types for ${typedFields.slice(0, 3).join(", ")}`
+        : `[Schema] Validate field data types – ${method} ${path}`;
+    }
+
+    case "schema.request_body": {
+      const topFields = ensureArray(plan?.spec_evidence?.top_level_fields);
+
+      return topFields.length > 0
+        ? `[Schema] ${method} ${path} accepts request fields ${topFields.join(", ")}`
+        : `[Schema] Validate request structure – ${method} ${path}`;
+    }
+
+    case "success.min_payload":
+      return `[Payload-Min] Validate minimal payload – ${method} ${path}`;
+
+    case "success.full_payload":
+      return `[Payload-Full] Validate full payload – ${method} ${path}`;
+
+    case "auth.missing_credentials":
+      return `[Auth] Reject missing credentials – ${method} ${path}`;
+
+    case "auth.invalid_credentials":
+      return `[Auth] Reject invalid credentials – ${method} ${path}`;
+
+    case "negative.empty_body":
+      return `[Negative] Reject empty body – ${method} ${path}`;
+
+    case "negative.missing_required_query":
+      return `[Negative] Missing query '${field}' – ${method} ${path}`;
+
+    case "negative.below_minimum":
+      return `[Negative] '${field}' below minimum (${plan.spec_evidence.minimum}) – ${method} ${path}`;
+
+    case "negative.above_maximum":
+      return `[Negative] '${field}' above maximum (${plan.spec_evidence.maximum}) – ${method} ${path}`;
+
+    case "negative.missing_required_path":
+      return `[Negative] Invalid path '${field}' – ${method} ${path}`;
+
+    case "negative.missing_required_body_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+
+      return `[Negative] Missing required field '${targetField}' – ${method} ${path}`;
+    }
+
+    case "negative.invalid_enum": {
+      const enumValues = ensureArray(plan?.spec_evidence?.enum_values);
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_enum_value__";
+
+      return enumValues.length > 0
+        ? `[Negative] Reject invalid enum '${field}' (${invalidValue} not in ${enumValues.join(", ")}) – ${method} ${path}`
+        : `[Negative] Invalid enum '${field}' – ${method} ${path}`;
+    }
+
+    case "negative.invalid_type": {
+      const expectedType = plan?.spec_evidence?.field_type || "documented";
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_type_value__";
+
+      return `[Negative] Invalid type for '${field}' (${JSON.stringify(invalidValue)} not ${expectedType}) – ${method} ${path}`;
+    }
+
+    case "negative.invalid_format":
+      return `[Negative] Invalid format '${field}' – ${method} ${path}`;
+
+    case "negative.string_too_long":
+      return `[Negative] '${field}' exceeds length – ${method} ${path}`;
+
+    case "negative.numeric_above_maximum":
+      return `[Negative] '${field}' exceeds limit – ${method} ${path}`;
+
+    case "negative.null_required_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const fieldType = plan?.spec_evidence?.field_schema?.type || null;
+
+      return fieldType
+        ? `[Negative] Required field '${targetField}' set to null (${fieldType}) – ${method} ${path}`
+        : `[Negative] Required field '${targetField}' set to null – ${method} ${path}`;
+    }
+
     default:
-      return `${method} ${path} - ${plan.test_type || "api"} scenario`;
+      return `[${plan.test_type || "API"}] Validate behavior – ${method} ${path}`;
   }
 }
 
@@ -1110,63 +1703,172 @@ function buildScenarioObjective(endpoint, plan) {
   const path = endpoint?.path || "/";
   const field = plan.field_target || scenarioSuffix(plan) || "field";
   const family = scenarioFamily(plan);
+  const actionLabel = getEndpointActionLabel(endpoint);
 
   switch (family) {
     case "auth.missing_credentials":
-      return `Verify that ${method} ${path} rejects requests when authentication credentials are not provided.`;
+      return `Verify that ${method} ${path} blocks access when authentication credentials are missing.`;
+
     case "auth.invalid_credentials":
-      return `Verify that ${method} ${path} rejects requests when authentication credentials are invalid.`;
+      return `Verify that ${method} ${path} blocks access when authentication credentials are invalid or expired.`;
+
     case "negative.empty_body":
-      return `Verify that ${method} ${path} rejects requests when the required request body is not sent.`;
+      return `Verify that ${method} ${path} rejects requests when the required request body is not provided.`;
+
+    case "negative.below_minimum":
+      return `Verify that ${method} ${path} rejects '${field}' when value is below minimum allowed (${plan.spec_evidence.minimum}).`;
+
+    case "negative.above_maximum":
+      return `Verify that ${method} ${path} rejects '${field}' when value exceeds maximum allowed (${plan.spec_evidence.maximum}).`;
+
     case "negative.missing_required_query":
       return `Verify that ${method} ${path} rejects requests when required query parameter '${field}' is missing.`;
+
     case "negative.missing_required_path":
-      return `Verify that ${method} ${path} rejects requests when required path parameter '${field}' is malformed or empty.`;
-    case "negative.invalid_enum":
-      return `Verify that ${method} ${path} rejects requests when '${field}' contains a value outside the allowed enum.`;
-    case "negative.null_required_field":
-      return `Verify that ${method} ${path} rejects requests when required field '${field}' is null.`;
+      return `Verify that ${method} ${path} rejects requests when required path parameter '${field}' is empty, malformed, or invalid.`;
+
+    case "negative.missing_required_body_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `Verify that ${method} ${path} rejects requests when required field '${targetField}' is missing from the request body. Documented required fields include: ${requiredFields.join(", ")}.`
+        : `Verify that ${method} ${path} rejects requests when required field '${targetField}' is missing from the request body.`;
+    }
+
+    case "negative.invalid_enum": {
+      const enumValues = ensureArray(plan?.spec_evidence?.enum_values);
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_enum_value__";
+
+      return enumValues.length > 0
+        ? `Verify that ${method} ${path} rejects requests when '${field}' is set to invalid value '${invalidValue}', which is outside the documented enum (${enumValues.join(", ")}).`
+        : `Verify that ${method} ${path} rejects requests when '${field}' contains a value outside the documented enum.`;
+    }
+
+    case "negative.null_required_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `Verify that ${method} ${path} rejects requests when required field '${targetField}' is set to null. Documented required fields include: ${requiredFields.join(", ")}.`
+        : `Verify that ${method} ${path} rejects requests when required field '${targetField}' is null.`;
+    }
+    case "negative.invalid_type": {
+      const expectedType = plan?.spec_evidence?.field_type || "documented";
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_type_value__";
+
+      return `Verify that ${method} ${path} rejects requests when '${field}' is set to value '${invalidValue}', which does not match the documented type '${expectedType}'.`;
+    }
+
     case "negative.invalid_format":
-      return `Verify that ${method} ${path} rejects requests when '${field}' is not in the expected format.`;
+      return `Verify that ${method} ${path} rejects requests when '${field}' does not match the documented format.`;
+
     case "negative.string_too_long":
-      return `Verify that ${method} ${path} rejects requests when '${field}' exceeds the documented max length.`;
+      return `Verify that ${method} ${path} rejects requests when '${field}' exceeds the documented maximum length.`;
+
     case "negative.numeric_above_maximum":
-      return `Verify that ${method} ${path} rejects requests when '${field}' exceeds the documented maximum value.`;
+      return `Verify that ${method} ${path} rejects requests when '${field}' exceeds the documented maximum numeric value.`;
+
     case "negative.unsupported_content_type":
-      return `Verify that ${method} ${path} rejects requests sent with an unsupported Content-Type header.`;
+      return `Verify that ${method} ${path} rejects requests sent with an unsupported or invalid Content-Type header.`;
+
     case "success.min_payload":
-      return `Verify that ${method} ${path} accepts a minimal valid payload using only required fields.`;
+      return `Verify that ${method} ${path} accepts a minimal valid payload containing only required documented fields.`;
+
     case "success.full_payload":
-      return `Verify that ${method} ${path} accepts a complete valid payload including optional documented fields.`;
-    case "contract.success":
-      return `Verify that ${method} ${path} returns a successful response for a valid request.`;
-    case "contract.status_code":
-      return `Verify that ${method} ${path} returns the documented success status code for a valid request.`;
-    case "contract.content_type":
-      return `Verify that ${method} ${path} returns the documented response content type.`;
-    case "contract.required_fields":
-      return `Verify that ${method} ${path} returns all mandatory response fields defined in the API contract.`;
+      return `Verify that ${method} ${path} accepts a complete valid payload including optional documented fields where applicable.`;
+
+    case "contract.success": {
+      const primaryStatus =
+        plan?.spec_evidence?.primary_status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+      const responseFields = ensureArray(plan?.spec_evidence?.response_fields);
+
+      return responseFields.length > 0
+        ? `Verify that ${method} ${path} returns documented success status ${primaryStatus} and includes documented response fields: ${responseFields.join(", ")}.`
+        : `Verify that ${method} ${path} returns documented success status ${primaryStatus} for a valid request.`;
+    }
+
+    case "contract.status_code": {
+      const status =
+        plan?.spec_evidence?.status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+
+      return `Verify that ${method} ${path} returns HTTP ${status} as documented for a valid request.`;
+    }
+
+    case "contract.content_type": {
+      const contentTypes = ensureArray(plan?.spec_evidence?.content_types);
+
+      return contentTypes.length > 0
+        ? `Verify that ${method} ${path} returns one of the documented response content types: ${contentTypes.join(", ")}.`
+        : `Verify that ${method} ${path} returns the documented response content type for a valid request.`;
+    }
+
+    case "contract.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `Verify that ${method} ${path} returns all mandatory response fields defined by the API contract, including: ${requiredFields.join(", ")}.`
+        : `Verify that ${method} ${path} returns all mandatory response fields defined by the API contract.`;
+    }
+
     case "contract.request_body":
-      return `Verify that ${method} ${path} accepts a valid request body aligned with the documented contract.`;
-    case "schema.response":
-      return `Verify that ${method} ${path} returns a response body that matches the documented schema.`;
-    case "schema.required_fields":
-      return `Verify that ${method} ${path} returns all required response fields defined in the schema.`;
-    case "schema.field_types":
-      return `Verify that ${method} ${path} returns response fields using the documented data types.`;
-    case "schema.request_body":
-      return `Verify that the request body for ${method} ${path} conforms to the documented request schema.`;
+      return `Verify that ${method} ${path} accepts a valid request payload that conforms to the documented request contract and processes it successfully.`;
+    case "schema.response": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
 
-    case "schema.request_required_fields":
-      return `Verify that the request body for ${method} ${path} includes all required documented fields.`;
+      return `Verify that ${method} ${path} returns a response body that conforms to the documented response schema${nestedFields.length > 0 ? `, including nested fields such as ${nestedFields.join(", ")}` : ""}${arrayFields.length > 0 ? ` and array structures such as ${arrayFields.join(", ")}` : ""}.`;
+    }
 
-    case "schema.request_field_types":
-      return `Verify that the request body for ${method} ${path} uses the documented field data types.`;
+    case "schema.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `Verify that ${method} ${path} returns all required fields defined in the documented response schema, including: ${requiredFields.join(", ")}.`
+        : `Verify that ${method} ${path} returns all required fields defined in the documented response schema.`;
+    }
+
+    case "schema.field_types": {
+      const typedFields = ensureArray(plan?.spec_evidence?.typed_fields);
+
+      return typedFields.length > 0
+        ? `Verify that ${method} ${path} returns response fields using documented data types such as: ${typedFields.join(", ")}.`
+        : `Verify that ${method} ${path} returns response fields using the documented data types.`;
+    }
+
+    case "schema.request_body": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
+
+      return `Verify that the request body for ${method} ${path} conforms to the documented request schema${nestedFields.length > 0 ? `, including nested fields such as ${nestedFields.join(", ")}` : ""}${arrayFields.length > 0 ? ` and array structures such as ${arrayFields.join(", ")}` : ""}.`;
+    }
+
+    case "schema.request_required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return requiredFields.length > 0
+        ? `Verify that the request body for ${method} ${path} includes all required documented fields, including: ${requiredFields.join(", ")}.`
+        : `Verify that the request body for ${method} ${path} includes all required documented fields.`;
+    }
+
+    case "schema.request_field_types": {
+      const typedFields = ensureArray(plan?.spec_evidence?.typed_fields);
+
+      return typedFields.length > 0
+        ? `Verify that the request body for ${method} ${path} uses documented field data types such as: ${typedFields.join(", ")}.`
+        : `Verify that the request body for ${method} ${path} uses the documented field data types.`;
+    }
+
     default:
       return `Validate ${plan.test_type || "API"} behavior for ${method} ${path}.`;
   }
 }
-
 function buildRequestDetailsSteps(req) {
   const steps = [];
 
@@ -1196,128 +1898,380 @@ function buildScenarioSteps(endpoint, plan, req) {
   const field = plan.field_target || scenarioSuffix(plan) || "field";
   const family = scenarioFamily(plan);
 
-  steps.push(`Set HTTP method to ${method}`);
-  steps.push(`Use endpoint path '${path}'`);
-  steps.push(...buildRequestDetailsSteps(req));
-
   switch (family) {
-    case "contract.success":
-    case "contract.status_code":
-    case "contract.content_type":
-    case "contract.required_fields":
+    case "contract.success": {
+      const responseFields = ensureArray(plan?.spec_evidence?.response_fields);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push(
+        "Populate all required headers, parameters, and request fields with valid documented values.",
+      );
+      steps.push("Send the request.");
+      steps.push("Capture the response status, headers, and body.");
+      if (responseFields.length > 0) {
+        steps.push(
+          `Verify the response includes documented fields: ${responseFields.join(", ")}.`,
+        );
+      }
+      break;
+    }
+
+    case "contract.status_code": {
+      const status =
+        plan?.spec_evidence?.status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Record the returned HTTP status code.");
+      steps.push(`Verify the returned status code is ${status}.`);
+      break;
+    }
+
+    case "contract.content_type": {
+      const contentTypes = ensureArray(plan?.spec_evidence?.content_types);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Capture the response headers.");
+      if (contentTypes.length > 0) {
+        steps.push(
+          `Verify the returned Content-Type is one of: ${contentTypes.join(", ")}.`,
+        );
+      } else {
+        steps.push(
+          "Verify the returned Content-Type matches the documented media type.",
+        );
+      }
+      break;
+    }
+
+    case "contract.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Capture the response body.");
+      if (requiredFields.length > 0) {
+        steps.push(
+          `Verify the response includes required fields: ${requiredFields.join(", ")}.`,
+        );
+      } else {
+        steps.push(
+          "Verify all documented mandatory response fields are present.",
+        );
+      }
+      break;
+    }
+
     case "contract.request_body":
-    case "schema.response":
-    case "schema.required_fields":
-    case "schema.field_types":
-      steps.push("Prepare a valid request using API specification");
-      steps.push("Send the request to the endpoint");
-      steps.push("Capture the response for validation");
-      break;
-
-    case "schema.request_body":
+      steps.push(`Prepare a valid request payload for ${method} ${path}.`);
+      steps.push("Populate the request body using the documented contract.");
+      steps.push("Send the request.");
       steps.push(
-        "Prepare a valid request body using the documented request schema",
+        "Verify the API accepts the documented payload without request-body validation errors.",
       );
-      steps.push("Send the request");
-      steps.push("Capture the response for validation");
+      steps.push("Verify the request is processed successfully.");
       break;
 
-    case "schema.request_required_fields":
+    case "schema.response": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Capture the response body.");
       steps.push(
-        "Prepare a request body containing all documented required fields",
+        "Validate the response body against the documented response schema.",
       );
-      steps.push("Send the request");
-      steps.push("Capture the response for validation");
+      if (nestedFields.length > 0) {
+        steps.push(
+          `Verify nested response fields such as ${nestedFields.join(", ")} are present and structured correctly.`,
+        );
+      }
+      if (arrayFields.length > 0) {
+        steps.push(
+          `Verify array structures such as ${arrayFields.join(", ")} conform to the documented schema.`,
+        );
+      }
       break;
+    }
 
-    case "schema.request_field_types":
-      steps.push("Prepare a request body using the documented field types");
-      steps.push("Send the request");
-      steps.push("Capture the response for validation");
+    case "schema.required_fields": {
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Capture the response body.");
+      if (requiredFields.length > 0) {
+        steps.push(
+          `Verify required response fields are present: ${requiredFields.join(", ")}.`,
+        );
+      } else {
+        steps.push(
+          "Verify all required fields defined in the response schema are present.",
+        );
+      }
       break;
+    }
 
+    case "schema.field_types": {
+      const typedFields = ensureArray(plan?.spec_evidence?.typed_fields);
+
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Capture the response body.");
+      if (typedFields.length > 0) {
+        steps.push(
+          `Verify documented field types for: ${typedFields.join(", ")}.`,
+        );
+      } else {
+        steps.push(
+          "Verify response field values match the documented data types.",
+        );
+      }
+      break;
+    }
+
+    case "schema.request_body": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
+
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push("Build the payload using the documented request schema.");
+      if (nestedFields.length > 0) {
+        steps.push(
+          `Include nested request fields such as ${nestedFields.join(", ")} where applicable.`,
+        );
+      }
+      if (arrayFields.length > 0) {
+        steps.push(
+          `Populate documented array structures such as ${arrayFields.join(", ")} where applicable.`,
+        );
+      }
+      steps.push("Send the request.");
+      steps.push("Verify no request-schema validation error occurs.");
+      break;
+    }
     case "success.min_payload":
-      steps.push(
-        "Prepare a valid payload using only required documented fields",
-      );
-      steps.push("Send the request");
-      steps.push("Capture the response for validation");
+      steps.push(`Prepare the minimal valid payload for ${method} ${path}.`);
+      steps.push("Include only the required documented fields.");
+      steps.push("Send the request.");
+      steps.push("Verify the API accepts the minimal valid payload.");
       break;
 
     case "success.full_payload":
+      steps.push(`Prepare the full valid payload for ${method} ${path}.`);
       steps.push(
-        "Prepare a complete valid payload including optional documented fields where applicable",
+        "Include required fields and all applicable optional documented fields.",
       );
-      steps.push("Send the request");
-      steps.push("Capture the response for validation");
+      steps.push("Send the request.");
+      steps.push("Verify the API accepts the complete payload successfully.");
       break;
 
     case "auth.missing_credentials":
-      steps.push("Remove the Authorization header");
-      steps.push("Send the request");
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Remove authentication credentials from the request.");
+      steps.push("Send the request.");
+      steps.push("Verify the API rejects the unauthenticated request.");
       break;
 
     case "auth.invalid_credentials":
-      steps.push("Replace the Authorization header with an invalid token");
-      steps.push("Send the request");
-      break;
-
-    case "negative.missing_required_query":
-      steps.push(`Remove query parameter '${field}'`);
-      steps.push("Send the request");
-      break;
-
-    case "negative.missing_required_path":
-      steps.push(`Set path parameter '${field}' to an invalid or empty value`);
-      steps.push("Send the request");
-      break;
-
-    case "negative.invalid_enum":
-      steps.push(`Set '${field}' to a value outside the allowed enum`);
-      steps.push("Send the request");
-      break;
-
-    case "negative.null_required_field":
-      steps.push(`Set '${field}' to null`);
-      steps.push("Send the request");
-      break;
-
-    case "negative.invalid_format":
-      steps.push(`Set '${field}' to an invalid format`);
-      steps.push("Send the request");
-      break;
-
-    case "negative.string_too_long":
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
       steps.push(
-        `Set '${field}' to a value longer than the allowed maximum length`,
+        "Replace the authentication credential with an invalid value.",
       );
-      steps.push("Send the request");
-      break;
-
-    case "negative.numeric_above_maximum":
-      steps.push(`Set '${field}' to a value above the allowed maximum`);
-      steps.push("Send the request");
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request as unauthorized or forbidden.",
+      );
       break;
 
     case "negative.empty_body":
-      steps.push(`Send ${method} ${path} without request body`);
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Remove the request body completely.");
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request because the body is required.",
+      );
+      break;
+
+    case "negative.below_minimum":
+      steps.push(
+        `Set '${field}' to ${plan.spec_evidence.invalid_value} (below minimum).`,
+      );
+      break;
+
+    case "negative.above_maximum":
+      steps.push(
+        `Set '${field}' to ${plan.spec_evidence.invalid_value} (above maximum).`,
+      );
+      break;
+
+    case "negative.missing_required_query":
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push(`Remove required query parameter '${field}'.`);
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to the missing query parameter.",
+      );
+      break;
+
+    case "negative.missing_required_path":
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push(
+        `Set required path parameter '${field}' to an invalid or empty value.`,
+      );
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to the invalid path parameter.",
+      );
+      break;
+
+    case "negative.missing_required_body_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(
+        `Remove required field '${targetField}' from the request body.`,
+      );
+      if (requiredFields.length > 0) {
+        steps.push(
+          `Keep other required fields valid: ${requiredFields.filter((f) => f !== targetField).join(", ") || "none"}.`,
+        );
+      }
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to the missing required field.",
+      );
+      break;
+    }
+
+    case "negative.invalid_enum": {
+      const enumSource = plan?.spec_evidence?.enum_source || "body";
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_enum_value__";
+      const enumValues = ensureArray(plan?.spec_evidence?.enum_values);
+
+      if (enumSource === "query") {
+        steps.push(`Prepare a valid request for ${method} ${path}.`);
+        steps.push(
+          `Set query parameter '${field}' to invalid value ${JSON.stringify(invalidValue)}.`,
+        );
+      } else if (enumSource === "path") {
+        steps.push(`Prepare a valid request for ${method} ${path}.`);
+        steps.push(
+          `Set path parameter '${field}' to invalid value ${JSON.stringify(invalidValue)}.`,
+        );
+      } else {
+        steps.push(`Prepare a valid request body for ${method} ${path}.`);
+        steps.push(
+          `Set body field '${field}' to invalid value ${JSON.stringify(invalidValue)}.`,
+        );
+      }
+
+      if (enumValues.length > 0) {
+        steps.push(
+          `Use a value that is outside the documented enum: ${enumValues.map((v) => JSON.stringify(v)).join(", ")}.`,
+        );
+      }
+
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to enum validation failure.",
+      );
+      break;
+    }
+
+    case "negative.null_required_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(`Set required field '${targetField}' to null.`);
+      if (requiredFields.length > 0) {
+        steps.push(
+          `Keep other required fields valid: ${requiredFields.filter((f) => f !== targetField).join(", ") || "none"}.`,
+        );
+      }
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request because a required field was set to null.",
+      );
+      break;
+    }
+
+    case "negative.invalid_type": {
+      const expectedType = plan?.spec_evidence?.field_type || "documented";
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_type_value__";
+
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(
+        `Set body field '${field}' to invalid value ${JSON.stringify(invalidValue)} instead of expected type '${expectedType}'.`,
+      );
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to request-body type validation failure.",
+      );
+      break;
+    }
+
+    case "negative.invalid_format":
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(
+        `Set '${field}' to a value that does not match the documented format.`,
+      );
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to format validation failure.",
+      );
+      break;
+
+    case "negative.string_too_long":
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(
+        `Set '${field}' to a string longer than the documented maximum length.`,
+      );
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to string length validation.",
+      );
+      break;
+
+    case "negative.numeric_above_maximum":
+      steps.push(`Prepare a valid request body for ${method} ${path}.`);
+      steps.push(
+        `Set '${field}' to a numeric value above the documented maximum.`,
+      );
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to numeric constraint validation.",
+      );
       break;
 
     case "negative.unsupported_content_type":
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
       steps.push(
-        "Replace the Content-Type header with an unsupported media type",
+        "Replace the Content-Type header with an unsupported media type.",
       );
-      steps.push("Send the request");
+      steps.push("Send the request.");
+      steps.push(
+        "Verify the API rejects the request due to unsupported content type.",
+      );
       break;
 
     default:
-      steps.push("Send the request");
+      steps.push(`Prepare a valid request for ${method} ${path}.`);
+      steps.push("Send the request.");
+      steps.push("Verify the API behavior matches the documented expectation.");
       break;
   }
 
   return steps;
 }
-
 function buildScenarioExpectedResults(plan, endpoint) {
   const statuses = ensureArray(plan?.expected_status_candidates).join(" or ");
   const field = plan.field_target || scenarioSuffix(plan) || "field";
@@ -1403,34 +2357,53 @@ function buildScenarioExpectedResults(plan, endpoint) {
     }
 
     case "contract.success": {
-      const fields = getTopLevelResponseFields(endpoint);
+      const primaryStatus =
+        plan?.spec_evidence?.primary_status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        "200";
+      const responseFields = ensureArray(plan?.spec_evidence?.response_fields);
+
       return [
-        `Response status should be ${statuses}`,
+        `Response status should be ${primaryStatus}`,
         "Response should follow the documented success contract",
-        ...(fields.length > 0
+        ...(responseFields.length > 0
           ? [
-              `Response should include top-level fields such as: ${fields.join(", ")}`,
+              `Response should include documented fields: ${responseFields.join(", ")}`,
             ]
-          : []),
+          : ["Response should not be empty"]),
       ];
     }
 
-    case "contract.status_code":
+    case "contract.status_code": {
+      const status =
+        plan?.spec_evidence?.status ||
+        ensureArray(plan?.expected_status_candidates)[0] ||
+        statuses;
+
       return [
-        `Response status should be ${statuses}`,
-        "Returned status code should match the documented success response",
+        `Response status should be ${status}`,
+        `Returned status code should match documented HTTP ${status}`,
         "No unexpected 4xx or 5xx response should be returned for valid input",
       ];
+    }
 
-    case "contract.content_type":
+    case "contract.content_type": {
+      const contentTypes = ensureArray(plan?.spec_evidence?.content_types);
+
       return [
         `Response status should be ${statuses}`,
-        "Response should include the documented Content-Type header",
+        ...(contentTypes.length > 0
+          ? [
+              `Response Content-Type should be one of: ${contentTypes.join(", ")}`,
+            ]
+          : ["Response should include the documented Content-Type header"]),
         "Returned media type should match the API contract",
       ];
+    }
 
     case "contract.required_fields": {
-      const requiredFields = getResponseRequiredFields(endpoint);
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
       return [
         `Response status should be ${statuses}`,
         "All mandatory contract fields should be present in the response",
@@ -1455,15 +2428,29 @@ function buildScenarioExpectedResults(plan, endpoint) {
       ];
     }
 
-    case "schema.response":
+    case "schema.response": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
+
       return [
         `Response status should be ${statuses}`,
         "Response body should conform to the documented response schema",
-        "No undocumented top-level structure should violate schema validation",
+        ...(nestedFields.length > 0
+          ? [
+              `Nested response fields should be valid, including: ${nestedFields.join(", ")}`,
+            ]
+          : []),
+        ...(arrayFields.length > 0
+          ? [
+              `Array structures should be valid, including: ${arrayFields.join(", ")}`,
+            ]
+          : []),
+        "No undocumented structure should violate schema validation",
       ];
+    }
 
     case "schema.required_fields": {
-      const requiredFields = getResponseRequiredFields(endpoint);
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
 
       return [
         `Response status should be ${statuses}`,
@@ -1475,14 +2462,35 @@ function buildScenarioExpectedResults(plan, endpoint) {
     }
 
     case "schema.field_types": {
-      const topFields = getTopLevelResponseFields(endpoint);
+      const typedFields = ensureArray(plan?.spec_evidence?.typed_fields);
 
       return [
         `Response status should be ${statuses}`,
         "Response fields should use the documented data types",
-        ...(topFields.length > 0
-          ? [`Validate field types for: ${topFields.join(", ")}`]
+        ...(typedFields.length > 0
+          ? [`Validate documented field types for: ${typedFields.join(", ")}`]
           : []),
+      ];
+    }
+
+    case "schema.request_body": {
+      const nestedFields = ensureArray(plan?.spec_evidence?.nested_fields);
+      const arrayFields = ensureArray(plan?.spec_evidence?.array_fields);
+
+      return [
+        `Response status should be ${statuses}`,
+        "Request body should conform to the documented request schema",
+        ...(nestedFields.length > 0
+          ? [
+              `Nested request fields should be valid, including: ${nestedFields.join(", ")}`,
+            ]
+          : []),
+        ...(arrayFields.length > 0
+          ? [
+              `Array request structures should be valid, including: ${arrayFields.join(", ")}`,
+            ]
+          : []),
+        "No request-schema validation error should occur for this valid payload",
       ];
     }
 
@@ -1494,19 +2502,63 @@ function buildScenarioExpectedResults(plan, endpoint) {
         "Request should not be processed successfully",
       ];
 
-    case "negative.invalid_enum":
+    case "negative.below_minimum":
       return [
         `Response status should be ${statuses}`,
-        `Response should indicate that '${field}' contains an unsupported enum value`,
-        "Request should not be processed successfully",
+        `Field '${field}' should be rejected for being below minimum`,
       ];
 
-    case "negative.null_required_field":
+    case "negative.above_maximum":
       return [
         `Response status should be ${statuses}`,
-        `Response should indicate that required field '${field}' cannot be null`,
+        `Field '${field}' should be rejected for exceeding maximum`,
+      ];
+
+    case "negative.invalid_enum": {
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_enum_value__";
+      const enumValues = ensureArray(plan?.spec_evidence?.enum_values);
+
+      return [
+        `Response status should be ${statuses}`,
+        `Response should indicate that '${field}' contains invalid enum value ${JSON.stringify(invalidValue)}`,
+        ...(enumValues.length > 0
+          ? [
+              `Accepted enum values for '${field}' are limited to: ${enumValues.map((v) => JSON.stringify(v)).join(", ")}`,
+            ]
+          : []),
         "Request should not be processed successfully",
       ];
+    }
+
+    case "negative.null_required_field": {
+      const targetField = plan?.spec_evidence?.missing_field || field;
+      const requiredFields = ensureArray(plan?.spec_evidence?.required_fields);
+
+      return [
+        `Response status should be ${statuses}`,
+        `Response should indicate that required field '${targetField}' cannot be null`,
+        ...(requiredFields.length > 0
+          ? [
+              `Other documented required fields remain: ${requiredFields.filter((f) => f !== targetField).join(", ") || "none"}`,
+            ]
+          : []),
+        "Request should not be processed successfully",
+      ];
+    }
+    case "negative.invalid_type": {
+      const expectedType = plan?.spec_evidence?.field_type || "documented";
+      const invalidValue =
+        plan?.spec_evidence?.invalid_value || "__invalid_type_value__";
+
+      return [
+        `Response status should be ${statuses}`,
+        `Response should indicate that field '${field}' has invalid type`,
+        `Response should indicate expected type '${expectedType}' for '${field}'`,
+        `Rejected value should be ${JSON.stringify(invalidValue)}`,
+        "Request should not be processed successfully",
+      ];
+    }
 
     case "negative.invalid_format":
       return [
@@ -1578,6 +2630,8 @@ function buildScenarioPreconditions(endpoint, plan) {
     family === "success.full_payload" ||
     family === "schema.request_body" ||
     family === "schema.request_required_fields" ||
+    family === "negative.below_minimum" ||
+    family === "negative.above_maximum" ||
     family === "schema.request_field_types"
   ) {
     preconditions.push(
@@ -1598,8 +2652,10 @@ function buildScenarioPreconditions(endpoint, plan) {
 
   if (
     family === "negative.empty_body" ||
+    family === "negative.missing_required_body_field" ||
     family === "negative.invalid_enum" ||
     family === "negative.null_required_field" ||
+    family === "negative.invalid_type" ||
     family === "negative.invalid_format" ||
     family === "negative.string_too_long" ||
     family === "negative.numeric_above_maximum" ||
@@ -1622,17 +2678,34 @@ function buildValidationFocus(plan, endpoint) {
         "status_code.validation",
       ];
 
-    case "negative.invalid_enum":
+    case "negative.missing_required_body_field":
       return [
-        "request.body.enum_constraints",
+        "request.body.required_fields",
+        "request.body.missing_key_validation",
+        "status_code.validation",
+      ];
+
+    case "negative.invalid_enum": {
+      const enumSource = plan?.spec_evidence?.enum_source || "body";
+
+      return [
+        `request.${enumSource}.enum_constraints`,
         "error.response.structure",
         "status_code.validation",
       ];
+    }
 
     case "negative.null_required_field":
       return [
         "request.body.required_fields",
-        "nullability.validation",
+        "request.body.nullability_constraints",
+        "status_code.validation",
+      ];
+
+    case "negative.invalid_type":
+      return [
+        "request.body.type_constraints",
+        "error.response.structure",
         "status_code.validation",
       ];
 
@@ -1821,6 +2894,11 @@ function applyScenarioInvalidation(req, plan, profile, endpoint) {
       delete next.query_params[field];
     }
 
+    if (mode === "invalid_enum" && field) {
+      next.query_params[field] =
+        invalidate.invalid_value || "__invalid_enum_value__";
+    }
+
     return next;
   }
 
@@ -1829,6 +2907,11 @@ function applyScenarioInvalidation(req, plan, profile, endpoint) {
 
     if (mode === "missing_or_malformed" && field) {
       next.path_params[field] = "";
+    }
+
+    if (mode === "invalid_enum" && field) {
+      next.path_params[field] =
+        invalidate.invalid_value || "__invalid_enum_value__";
     }
 
     return next;
@@ -1842,12 +2925,21 @@ function applyScenarioInvalidation(req, plan, profile, endpoint) {
 
     next.request_body = isObject(next.request_body) ? next.request_body : {};
 
+    if (mode === "missing_required_field" && field) {
+      delete next.request_body[field];
+    }
+
     if (mode === "invalid_enum" && field) {
-      next.request_body[field] = "__invalid_enum_value__";
+      next.request_body[field] =
+        invalidate.invalid_value || "__invalid_enum_value__";
     }
 
     if (mode === "null" && field) {
       next.request_body[field] = null;
+    }
+    if (mode === "invalid_type" && field) {
+      next.request_body[field] =
+        invalidate.invalid_value || "__invalid_type_value__";
     }
 
     if (mode === "invalid_format" && field) {
@@ -1863,6 +2955,13 @@ function applyScenarioInvalidation(req, plan, profile, endpoint) {
     if (mode === "numeric_above_maximum" && field) {
       const fieldSchema = requestBodySchema?.properties?.[field] || {};
       next.request_body[field] = buildAboveMaximumValue(fieldSchema);
+    }
+    if (mode === "below_minimum" && field) {
+      next.request_body[field] = invalidate.invalid_value;
+    }
+
+    if (mode === "above_maximum" && field) {
+      next.request_body[field] = invalidate.invalid_value;
     }
 
     return next;
@@ -2035,6 +3134,40 @@ export function validateScenarioCase(tc, profile, plan) {
         "Minimal-payload scenario contains non-required body fields.",
       );
     }
+  }
+
+  if (
+    isScenario(plan, "negative.missing_required_body_field") &&
+    plan?.field_target &&
+    tc?.test_data?.request_body &&
+    Object.prototype.hasOwnProperty.call(
+      tc.test_data.request_body,
+      plan.field_target,
+    )
+  ) {
+    errors.push(
+      "Missing-required-body-field scenario still contains the targeted request body field.",
+    );
+  }
+  if (
+    isScenario(plan, "negative.invalid_type") &&
+    plan?.field_target &&
+    tc?.test_data?.request_body &&
+    tc.test_data.request_body[plan.field_target] === undefined
+  ) {
+    errors.push(
+      "Invalid-type scenario did not set a value for the targeted request body field.",
+    );
+  }
+
+  if (
+    isScenario(plan, "negative.invalid_type") &&
+    plan?.field_target &&
+    !stepsJoined.includes(String(plan?.field_target || "").toLowerCase())
+  ) {
+    errors.push(
+      "Invalid-type scenario steps do not mention the targeted body field.",
+    );
   }
   return {
     is_valid: errors.length === 0,

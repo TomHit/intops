@@ -187,7 +187,7 @@ function buildBaseCaseIdParts(endpoint, options = {}) {
 }
 
 function fitIdToLength(parts, seq, options = {}) {
-  const { maxIdLength = 80, minKeepParts = 2 } = options;
+  const { maxIdLength = 36, minKeepParts = 2 } = options;
 
   const seqPart = String(seq).padStart(3, "0");
   let working = [...parts, seqPart];
@@ -216,9 +216,9 @@ function fitIdToLength(parts, seq, options = {}) {
 
   // Step 3: final compact fallback
   const compact = [
-    truncateToken(parts[0] || "TC", 6),
-    truncateToken(parts[1] || "DEFAULT", 8),
-    truncateToken(parts[2] || "CASE", 10),
+    truncateToken(parts[0] || "TC", 4),
+    truncateToken(parts[1] || "DEFAULT", 6),
+    truncateToken(parts[2] || "CASE", 6),
     seqPart,
   ].filter(Boolean);
 
@@ -244,11 +244,11 @@ function buildHumanCaseTitle(endpoint, scenarioName = "") {
 export function createCaseIdGenerator(allEndpoints = [], options = {}) {
   const {
     prefix = "TC",
-    maxIdLength = 80,
-    maxGroupTokenLen = 10,
-    maxGroupParts = 2,
-    maxActionTokenLen = 12,
-    maxActionParts = 6,
+    maxIdLength = 36,
+    maxGroupTokenLen = 6,
+    maxGroupParts = 1,
+    maxActionTokenLen = 8,
+    maxActionParts = 3,
     collisionHashLen = 4,
   } = options;
 
