@@ -41,13 +41,7 @@ export default function TestOpsLandingPage() {
     <div className="tol-page">
       <header className="tol-header">
         <div className="tol-brand">
-          <div className="tol-brand-mark">T</div>
-          <div>
-            <div className="tol-brand-title">IntOps</div>
-            <div className="tol-brand-subtitle">
-              API → UI → Automation ready
-            </div>
-          </div>
+          <img src="/intops-logo.png" alt="IntOps" className="tol-brand-logo" />
         </div>
 
         <nav className="tol-nav">

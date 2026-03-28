@@ -283,7 +283,7 @@ input {
   grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
   gap: 40px;
   align-items: center;
-  padding: 36px 52px;
+  padding: 24px 52px;
 }
 
 .login-panel {
@@ -306,7 +306,7 @@ input {
 
 .login-panel-form {
   border-radius: 30px;
-  padding: 34px;
+  padding: 22px;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid var(--auth-border);
   box-shadow: var(--auth-shadow);
@@ -331,6 +331,10 @@ input {
   box-shadow: var(--auth-shadow);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+.login-panel-form-individual {
+  margin-top: 100px;
 }
 
 .auth-preview-top {
@@ -422,10 +426,10 @@ input {
 
 /* form card */
 .login-card {
-  min-height: 560px;
+  min-height: auto;
   background: rgba(10, 15, 29, 0.82);
   border-radius: 26px;
-  padding: 28px;
+  padding: 22px;
   border: 1px solid var(--auth-border);
   box-shadow: var(--auth-shadow);
   display: flex;
@@ -435,14 +439,14 @@ input {
 
 .login-card-head h2 {
   margin: 0;
-  font-size: 30px;
-  line-height: 1.15;
+  font-size: 26px;
+  line-height: 1.1;
 }
 
 .login-card-head p {
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--auth-muted);
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .google-btn {
@@ -493,24 +497,24 @@ input {
 
 .login-form {
   display: grid;
-  gap: 16px;
-  margin-top: 4px;
+  gap: 14px;
+  margin-top: 0;
 }
 
 .form-group {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .form-group label {
   color: #dbe6ff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .form-group input {
   width: 100%;
-  min-height: 52px;
+  min-height: 48px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 0 16px;
@@ -533,7 +537,7 @@ input {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 54px;
+  min-height: 50px;
   padding: 0 20px;
   border: none;
   border-radius: 16px;
@@ -561,10 +565,10 @@ input {
 }
 
 .login-footnote {
-  margin-top: 16px;
+  margin-top: 12px;
   color: var(--auth-muted);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* remove old preview system */

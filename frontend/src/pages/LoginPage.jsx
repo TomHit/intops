@@ -123,7 +123,11 @@ export default function LoginPage() {
             ← Back to setup selection
           </Link>
         </section>
-        <section className="login-panel login-panel-form">
+        <section
+          className={`login-panel login-panel-form ${
+            isIndividual ? "login-panel-form-individual" : ""
+          }`}
+        >
           <div className="login-card">
             <div className="login-card-head">
               <h2>{pageMeta.formTitle}</h2>

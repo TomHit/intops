@@ -63,9 +63,9 @@ button {
 .tol-header {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 28px 46px 12px;
+  padding: 10px 46px 6px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
 }
@@ -73,19 +73,37 @@ button {
 .tol-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
   min-width: 0;
+  gap: 14px;
+  transform: translateY(-40px);
+}
+
+.tol-brand-full-logo {
+  height: 240px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+.tol-brand-logo {
+  width: 240px !important;
+  height: 240px !important;
+  max-width: 240px !important;
+  max-height: 240px !important;
+  object-fit: cover !important;
+  border-radius: 0px;
+  display: block;
+  flex: 0 0 240px;
 }
 
 .tol-brand-mark {
-  width: 58px;
-  height: 58px;
+  width: 100px;
+  height: 100px;
   border-radius: 18px;
   display: grid;
   place-items: center;
   font-weight: 900;
-  font-size: 2rem;
-  color: #041020;
+  font-size: 4rem;
+  color: hwb(292 2% 8%);
   background: linear-gradient(135deg, #49d3ff, #77a8ff);
   box-shadow: 0 12px 30px rgba(77, 197, 255, 0.28);
   flex: 0 0 auto;
@@ -93,7 +111,7 @@ button {
 
 .tol-brand-title {
   font-weight: 800;
-  font-size: 2rem;
+  font-size: 4rem;
   line-height: 1;
 }
 
@@ -109,6 +127,7 @@ button {
   gap: 34px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .tol-nav a {
@@ -129,11 +148,12 @@ main {
 .tol-hero {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 24px 46px 34px;
+  padding: 4px 46px 34px;
   display: grid;
   grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 620px);
   align-items: center;
   gap: 56px;
+  transform: translateY(-160px);
 }
 
 .tol-hero-copy {
@@ -242,7 +262,7 @@ main {
 .tol-hero-art {
   width: 100%;
   min-height: 390px;
-  margin-top: -72px;
+  margin-top: -20px;
   position: relative;
   border-radius: 34px;
   overflow: visible;
