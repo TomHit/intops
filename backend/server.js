@@ -1,15 +1,16 @@
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
-
-import { generateTestPlan } from "./src/services/generator.js";
-import { renderCsvFromTestPlan } from "./src/services/csvRenderer.js";
+import cors from "cors";
 
 import { loadOpenApiDoc } from "./src/services/openapiLoader.js";
 import {
   extractEndpointsLite,
   extractEndpointsFull,
 } from "./src/services/openapiParser.js";
+
+import { createJob, getJob, listJobs } from "./src/jobs/jobStore.js";
+import { runGenerationJob } from "./src/jobs/generationWorker.js";
 
 process.on("uncaughtException", (err) =>
   console.error("UNCAUGHT EXCEPTION:", err),
@@ -19,6 +20,8 @@ process.on("unhandledRejection", (err) =>
 );
 
 const app = express();
+
+app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // increase timeouts a bit for local ollama
@@ -29,6 +32,20 @@ app.use((req, res, next) => {
 });
 
 const PROJECTS_DIR = path.join(process.cwd(), "projects");
+
+function summarizeGenerateRequest(payload = {}) {
+  return {
+    project_id: payload?.project_id || null,
+    env: payload?.env || null,
+    auth_profile: payload?.auth_profile || "",
+    include: Array.isArray(payload?.include) ? payload.include : [],
+    ai: !!payload?.ai,
+    endpoints_n: Array.isArray(payload?.endpoints)
+      ? payload.endpoints.length
+      : null,
+    guidance_len: payload?.guidance ? String(payload.guidance).length : 0,
+  };
+}
 
 async function ensureProjectsDir() {
   await fs.mkdir(PROJECTS_DIR, { recursive: true });
@@ -71,10 +88,10 @@ async function loadAllProjects() {
 }
 
 // Health
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // Projects list from disk
-app.get("/api/projects", async (req, res) => {
+app.get("/api/projects", async (_req, res) => {
   try {
     const projects = await loadAllProjects();
     res.json(projects);
@@ -167,50 +184,152 @@ app.get("/api/projects/:id/endpoints", async (req, res) => {
   }
 });
 
-// Core: generate
+// Optional full endpoint details if needed later
+app.get("/api/projects/:id/endpoints/full", async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const specSource = String(req.query.spec_source || "").trim();
+
+    const { doc } = await loadOpenApiDoc(projectId, {
+      specSourceOverride: specSource || null,
+    });
+
+    const endpoints = extractEndpointsFull(doc);
+    res.json(endpoints);
+  } catch (e) {
+    console.error("FULL ENDPOINTS ERROR:", e);
+    res.status(400).json({ message: e?.message || String(e) });
+  }
+});
+
+// Core: generate async job
 app.post("/api/generate", async (req, res) => {
   try {
     const payload = req.body || {};
+    const summary = summarizeGenerateRequest(payload);
 
-    console.log("POST /api/generate", {
-      project_id: payload?.project_id,
-      env: payload?.env,
-      auth_profile: payload?.auth_profile,
-      include: payload?.include,
-      ai: payload?.ai,
-      endpoints_n: Array.isArray(payload?.endpoints)
-        ? payload.endpoints.length
-        : null,
-      guidance_len: payload?.guidance ? String(payload.guidance).length : 0,
+    console.log("POST /api/generate", summary);
+
+    const job = createJob({
+      type: "generate_test_plan",
+      request_summary: summary,
     });
 
-    const out = await generateTestPlan(payload);
-    const csv = renderCsvFromTestPlan(out.testplan);
+    setImmediate(() => {
+      runGenerationJob(job.job_id, payload);
+    });
 
-    res.json({
-      run_id: out.run_id,
-      generation_mode: out.generation_mode,
-      spec_quality: out.spec_quality,
-      blocked_endpoints: out.blocked_endpoints,
-      eligible_endpoints: out.eligible_endpoints,
-      testplan: out.testplan,
-      report: out.report,
-      csv,
+    return res.status(202).json({
+      ok: true,
+      job_id: job.job_id,
+      status: job.status,
+      created_at: job.created_at,
+      message: "Generation job accepted",
     });
   } catch (e) {
-    console.error("GENERATE ERROR:", e);
-
-    const status =
-      e?.name === "AjvValidationError" ||
-      e?.code === "SCHEMA_INVALID" ||
-      e?.details
-        ? 400
-        : 500;
-
-    res.status(status).json({
+    console.error("GENERATE JOB CREATE ERROR:", e);
+    return res.status(500).json({
+      ok: false,
       message: e?.message || String(e),
-      details: e?.details || null,
-      ...(status === 500 ? { stack: e?.stack || null } : {}),
+      stack: e?.stack || null,
+    });
+  }
+});
+
+// Job status
+app.get("/api/jobs/:jobId", (req, res) => {
+  try {
+    const job = getJob(req.params.jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        ok: false,
+        message: "Job not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      job: {
+        job_id: job.job_id,
+        status: job.status,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        started_at: job.started_at,
+        completed_at: job.completed_at,
+        error: job.error,
+        meta: job.meta,
+        has_result: !!job.result,
+      },
+    });
+  } catch (e) {
+    console.error("JOB STATUS ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
+
+// Job result
+app.get("/api/jobs/:jobId/result", (req, res) => {
+  try {
+    const job = getJob(req.params.jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        ok: false,
+        message: "Job not found",
+      });
+    }
+
+    if (job.status !== "completed") {
+      return res.status(409).json({
+        ok: false,
+        message: `Job is ${job.status}`,
+        error: job.error || null,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      job_id: job.job_id,
+      status: job.status,
+      result: job.result,
+    });
+  } catch (e) {
+    console.error("JOB RESULT ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
+
+// List jobs
+app.get("/api/jobs", (_req, res) => {
+  try {
+    const jobs = listJobs().map((job) => ({
+      job_id: job.job_id,
+      status: job.status,
+      created_at: job.created_at,
+      updated_at: job.updated_at,
+      started_at: job.started_at,
+      completed_at: job.completed_at,
+      error: job.error,
+      has_result: !!job.result,
+      meta: job.meta,
+    }));
+
+    return res.json({
+      ok: true,
+      jobs,
+    });
+  } catch (e) {
+    console.error("JOBS LIST ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
     });
   }
 });
