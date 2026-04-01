@@ -583,14 +583,14 @@ async function buildDeterministicTestPlan({
   endpoints,
   caseIdGen,
   fallbackBaseUrl = "",
-  batchFilePath,
 }) {
   const endpointMap = buildEndpointMap(endpoints);
   const perEndpointSeq = new Map();
 
-  let caseCount = 0;
+  const rawCases = await generateCasesForEndpoints(endpoints, options);
+  const normalizedCases = [];
 
-  await generateCasesForEndpoints(endpoints, options, async (testCase) => {
+  for (const testCase of rawCases) {
     const method =
       testCase?.api_details?.method ||
       testCase?.method ||
@@ -624,7 +624,7 @@ async function buildDeterministicTestPlan({
 
     const { scenario, ...rest } = testCase || {};
 
-    const normalizedCase = {
+    normalizedCases.push({
       ...rest,
       id: rest?.id || meta.id,
       title: rest?.title || meta.title,
@@ -645,11 +645,8 @@ async function buildDeterministicTestPlan({
       references: ensureArray(rest?.references),
       review_notes:
         typeof rest?.review_notes === "string" ? rest.review_notes : "",
-    };
-
-    await appendCaseToBatchFile(batchFilePath, normalizedCase);
-    caseCount += 1;
-  });
+    });
+  }
 
   return {
     project,
@@ -662,8 +659,9 @@ async function buildDeterministicTestPlan({
     },
     batch_summary: {
       endpoints_count: endpoints.length,
-      cases_count: caseCount,
+      cases_count: normalizedCases.length,
     },
+    cases: normalizedCases,
   };
 }
 function filterGeneratedPlanToEligibleEndpoints(plan, eligibleEndpoints) {
@@ -908,6 +906,7 @@ export async function generateTestPlan(payload) {
   const BATCH_SIZE = 2;
   const endpointBatches = chunkArray(eligibleEndpointRecords, BATCH_SIZE);
   const globalCaseIdGen = createCaseIdGenerator(eligibleEndpointRecords);
+  const allCases = [];
 
   console.log("RUN ID:", runId);
   console.log("TOTAL ELIGIBLE:", eligibleEndpointRecords.length);
@@ -920,19 +919,17 @@ export async function generateTestPlan(payload) {
       `Processing batch ${i + 1}/${endpointBatches.length} (${batch.length} endpoints)`,
     );
 
-    const batchFilePath = await initBatchFile(runId, i);
-
     const batchResult = await buildDeterministicTestPlan({
       project: projectBlock,
       options,
       endpoints: batch,
       caseIdGen: globalCaseIdGen,
       fallbackBaseUrl,
-      batchFilePath,
     });
 
-    console.log(`BATCH ${i + 1} FILE:`, batchFilePath);
     console.log(`BATCH ${i + 1} SUMMARY:`, batchResult.batch_summary);
+
+    allCases.push(...(batchResult.cases || []));
 
     const mem = process.memoryUsage();
     console.log(`MEMORY AFTER BATCH ${i + 1}:`, {
@@ -978,15 +975,15 @@ export async function generateTestPlan(payload) {
       enabled: true,
       batch_size: BATCH_SIZE,
       total_batches: endpointBatches.length,
-      file_format: "ndjson",
+      file_format: "db-migration-test",
     },
 
     result_storage: {
-      mode: "batch_files",
-      directory: OUT_DIR,
-      pattern: `${runId}_batch_<index>.ndjson`,
+      mode: "db-migration-test",
       message:
-        "Large testplan payload is not returned in-memory. Cases were streamed to NDJSON batch files during generation.",
+        "Cases are returned per generation run for database insertion during migration testing.",
     },
+
+    cases: allCases,
   };
 }

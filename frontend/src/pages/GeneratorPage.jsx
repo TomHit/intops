@@ -491,6 +491,7 @@ export default function GeneratorPage({
 
     const payload = {
       project_id: resolvedProjectId,
+      created_by: "b927ff5d-5d28-4caa-b046-9778608c397e",
       env: resolvedOptions.env,
       auth_profile: resolvedOptions.auth_profile,
       include: resolvedOptions.include,

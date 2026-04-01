@@ -3,9 +3,6 @@ import { resolveEndpointTestData } from "./testDataResolver.js";
 
 const DEFAULT_INCLUDE = ["contract", "schema", "negative", "auth"];
 
-/* =========================
-   INCLUDE NORMALIZATION
-========================= */
 function normalizeInclude(include) {
   if (!Array.isArray(include) || include.length === 0) {
     return [...DEFAULT_INCLUDE];
@@ -13,9 +10,6 @@ function normalizeInclude(include) {
   return [...new Set(include.map((x) => String(x).toLowerCase().trim()))];
 }
 
-/* =========================
-   DEDUP KEY
-========================= */
 function buildDedupKey(tc) {
   const bodyKeys = Object.keys(tc?.test_data?.request_body || {})
     .sort()
@@ -44,10 +38,7 @@ function buildDedupKey(tc) {
     .join("|");
 }
 
-/* =========================
-   MAIN ENGINE
-========================= */
-export async function generateCasesForEndpoint(endpoint, options = {}, onCase) {
+export async function generateCasesForEndpoint(endpoint, options = {}) {
   const include = normalizeInclude(options.include);
 
   const resolvedData = resolveEndpointTestData(endpoint);
@@ -69,6 +60,7 @@ export async function generateCasesForEndpoint(endpoint, options = {}, onCase) {
     requestBodyRequired: !!endpoint?.requestBody?.required,
   };
 
+  const cases = [];
   const dedup = new Set();
 
   let scenarioPlans = buildScenarioPlans(enrichedEndpoint, profile, []);
@@ -81,37 +73,27 @@ export async function generateCasesForEndpoint(endpoint, options = {}, onCase) {
     const tc = plan.build(enrichedEndpoint, profile);
     const validation = validateScenarioCase(tc, profile, plan);
 
-    if (!validation.is_valid) {
-      continue;
-    }
+    if (!validation.is_valid) continue;
 
     const key = buildDedupKey(tc);
 
     if (!dedup.has(key)) {
       dedup.add(key);
-
-      if (typeof onCase === "function") {
-        await onCase(tc, endpoint, plan);
-      }
+      cases.push(tc);
     }
   }
+
+  return cases;
 }
 
-/* =========================
-   MULTI ENDPOINT
-========================= */
-export async function generateCasesForEndpoints(
-  endpoints = [],
-  options = {},
-  onCase,
-) {
+export async function generateCasesForEndpoints(endpoints = [], options = {}) {
+  const out = [];
+
   for (const endpoint of endpoints) {
-    console.log(
-      `Processing endpoint: ${String(endpoint?.method || "GET").toUpperCase()} ${endpoint?.path || "/"}`,
-    );
-
-    await generateCasesForEndpoint(endpoint, options, onCase);
-
+    const cases = await generateCasesForEndpoint(endpoint, options);
+    out.push(...cases);
     await new Promise((resolve) => setImmediate(resolve));
   }
+
+  return out;
 }

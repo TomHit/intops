@@ -8,11 +8,30 @@ import {
   extractEndpointsLite,
   extractEndpointsFull,
 } from "./src/services/openapiParser.js";
-
+import { pool, testDbConnection } from "./src/db/postgres.js";
 import { createJob, getJob, listJobs } from "./src/jobs/jobStore.js";
 import { runGenerationJob } from "./src/jobs/generationWorker.js";
 
 import { validateSpecQuality } from "./src/services/specQualityValidator.js";
+
+import {
+  createGenerationRun,
+  completeGenerationRun,
+  failGenerationRun,
+} from "./src/repositories/runsRepo.js";
+import {
+  insertGeneratedCases,
+  countCasesByRun,
+  deleteCasesByRun,
+  getCasesByRunPaginated,
+} from "./src/repositories/casesRepo.js";
+import {
+  createProjectRecord,
+  getProjectById,
+  setProjectCurrentRun,
+  setProjectGenerationStatus,
+} from "./src/repositories/projectsRepo.js";
+import { generateTestPlan } from "./src/services/generator.js";
 
 process.on("uncaughtException", (err) =>
   console.error("UNCAUGHT EXCEPTION:", err),
@@ -34,61 +53,6 @@ app.use((req, res, next) => {
 });
 
 const PROJECTS_DIR = path.join(process.cwd(), "projects");
-const JOB_RESULTS_DIR = path.join(process.cwd(), "job-results");
-
-async function readRunCases(runId) {
-  await fs.mkdir(JOB_RESULTS_DIR, { recursive: true });
-
-  const entries = await fs.readdir(JOB_RESULTS_DIR, { withFileTypes: true });
-
-  const files = entries
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        entry.name.startsWith(`${runId}_batch_`) &&
-        entry.name.endsWith(".ndjson"),
-    )
-    .map((entry) => entry.name)
-    .sort((a, b) => {
-      const getBatchIndex = (name) => {
-        const match = name.match(/_batch_(\d+)\.ndjson$/);
-        return match ? Number(match[1]) : 0;
-      };
-      return getBatchIndex(a) - getBatchIndex(b);
-    });
-
-  if (files.length === 0) {
-    return {
-      files: [],
-      cases: [],
-    };
-  }
-
-  const cases = [];
-
-  for (const fileName of files) {
-    const fullPath = path.join(JOB_RESULTS_DIR, fileName);
-    const raw = await fs.readFile(fullPath, "utf-8");
-
-    const lines = raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    for (const line of lines) {
-      try {
-        cases.push(JSON.parse(line));
-      } catch (err) {
-        console.error("NDJSON PARSE ERROR:", fileName, err);
-      }
-    }
-  }
-
-  return {
-    files,
-    cases,
-  };
-}
 
 function summarizeGenerateRequest(payload = {}) {
   return {
@@ -165,9 +129,14 @@ app.post("/api/projects", async (req, res) => {
 
     const body = req.body || {};
     const projectName = String(body.project_name || "").trim();
+    const orgId = String(body.org_id || "").trim();
 
     if (!projectName) {
       return res.status(400).json({ message: "project_name is required" });
+    }
+
+    if (!orgId) {
+      return res.status(400).json({ message: "org_id is required" });
     }
 
     const projectId = `proj_${Date.now()}`;
@@ -203,6 +172,13 @@ app.post("/api/projects", async (req, res) => {
       JSON.stringify(projectConfig, null, 2),
       "utf-8",
     );
+
+    await createProjectRecord({
+      projectId,
+      orgId,
+      name: projectName,
+      specSource,
+    });
 
     res.status(201).json(projectConfig);
   } catch (e) {
@@ -418,17 +394,139 @@ app.get("/api/runs/:runId/cases", async (req, res) => {
       });
     }
 
-    const result = await readRunCases(runId);
+    const page = Math.max(1, Number(req.query.page || 1));
+    const pageSize = Math.max(
+      1,
+      Math.min(500, Number(req.query.page_size || 100)),
+    );
+
+    const result = await getCasesByRunPaginated(runId, page, pageSize);
+
+    const cases = (result.cases || []).map((row) => row.payload);
 
     return res.json({
       ok: true,
       run_id: runId,
-      total_cases: result.cases.length,
-      files: result.files,
-      cases: result.cases,
+      page,
+      page_size: pageSize,
+      total_cases: result.total || 0,
+      cases,
     });
   } catch (e) {
-    console.error("RUN CASES ERROR:", e);
+    console.error("RUN CASES DB ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
+
+app.get("/api/db-health", async (_req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT NOW() AS now, current_database() AS db, version() AS version",
+    );
+
+    return res.json({
+      ok: true,
+      db: result.rows[0].db,
+      now: result.rows[0].now,
+      version: result.rows[0].version,
+    });
+  } catch (e) {
+    console.error("DB HEALTH ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
+
+testDbConnection()
+  .then((row) => {
+    console.log("PostgreSQL connected:", row);
+  })
+  .catch((err) => {
+    console.error("PostgreSQL connection failed:", err);
+  });
+
+app.post("/api/generate-db-test", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const projectId = String(payload.project_id || "").trim();
+    const createdBy = String(payload.created_by || "").trim();
+
+    if (!projectId || !createdBy) {
+      return res.status(400).json({
+        ok: false,
+        message: "project_id and created_by are required",
+      });
+    }
+
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({
+        ok: false,
+        message: "Project not found",
+      });
+    }
+
+    await setProjectGenerationStatus(projectId, "running");
+
+    const run = await createGenerationRun({
+      projectId,
+      orgId: project.org_id,
+      createdBy,
+      generationMode: payload.generation_mode || "balanced",
+      includeTypes: payload.include || ["contract", "schema"],
+      env: payload.env || "staging",
+      authProfile: payload.auth_profile || "",
+      endpointCount: Number(payload.endpoints_n || 0),
+    });
+
+    try {
+      const result = await generateTestPlan(payload);
+
+      const caseRows = (Array.isArray(result?.cases) ? result.cases : []).map(
+        (tc) => ({
+          case_id: tc.id,
+          run_id: run.run_id,
+          project_id: projectId,
+          org_id: project.org_id,
+          method: String(tc?.api_details?.method || "GET").toUpperCase(),
+          path: tc?.api_details?.path || "/",
+          test_type: tc.test_type || "contract",
+          priority: tc.priority || null,
+          title: tc.title || "",
+          module: tc.module || null,
+          payload: tc,
+        }),
+      );
+
+      await insertGeneratedCases(caseRows);
+
+      const totalCases = await countCasesByRun(run.run_id);
+      const previousRunId = project.current_run_id;
+
+      await completeGenerationRun(run.run_id, totalCases);
+      await setProjectCurrentRun(projectId, run.run_id);
+
+      if (previousRunId) {
+        await deleteCasesByRun(previousRunId);
+      }
+
+      return res.json({
+        ok: true,
+        run_id: run.run_id,
+        case_count: totalCases,
+      });
+    } catch (err) {
+      await failGenerationRun(run.run_id, err?.message || "Generation failed");
+      await setProjectGenerationStatus(projectId, "idle");
+      throw err;
+    }
+  } catch (e) {
+    console.error("GENERATE DB TEST ERROR:", e);
     return res.status(500).json({
       ok: false,
       message: e?.message || String(e),
