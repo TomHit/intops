@@ -307,11 +307,18 @@ export default function GeneratorPage({
     async function loadPersistedCases() {
       if (activeSection !== "testCases") return;
       if (!run?.run_id) return;
-      if (run?.testplan?.suites?.length) return;
 
       try {
         const data = await fetchRunCases(run.run_id);
         const cases = Array.isArray(data?.cases) ? data.cases : [];
+        const totalCases = Number(data?.total_cases || cases.length);
+
+        const uniqueEndpointCount = new Set(
+          cases.map(
+            (c) =>
+              `${c.api_details?.method || ""} ${c.api_details?.path || ""}`,
+          ),
+        ).size;
 
         const reconstructedTestplan = {
           project: {
@@ -338,8 +345,9 @@ export default function GeneratorPage({
           ...run,
           testplan: reconstructedTestplan,
           report: {
-            total_cases: cases.length,
+            total_cases: totalCases,
             needs_review: cases.filter((c) => !!c.needs_review).length,
+            endpoint_count: uniqueEndpointCount,
           },
         };
 
@@ -363,27 +371,49 @@ export default function GeneratorPage({
   }, [
     activeSection,
     run?.run_id,
-    run?.testplan,
     resolvedProjectId,
     resolvedOptions.env,
     onSaveGeneratedRun,
   ]);
-
   async function fetchRunCases(runId) {
-    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/cases`, {
-      headers: { Accept: "application/json" },
-    });
+    const PAGE_SIZE = 500;
+    let page = 1;
+    let allCases = [];
+    let totalCases = 0;
 
-    const text = await res.text();
-    const data = safeJsonParse(text);
-
-    if (!res.ok) {
-      throw new Error(
-        data?.message || `Failed to load run cases (${res.status})`,
+    while (true) {
+      const res = await fetch(
+        `/api/runs/${encodeURIComponent(runId)}/cases?page=${page}&page_size=${PAGE_SIZE}`,
+        {
+          headers: { Accept: "application/json" },
+        },
       );
+
+      const text = await res.text();
+      const data = safeJsonParse(text);
+
+      if (!res.ok) {
+        throw new Error(
+          data?.message || `Failed to load run cases (${res.status})`,
+        );
+      }
+
+      const batch = Array.isArray(data?.cases) ? data.cases : [];
+      totalCases = Number(data?.total_cases || 0);
+
+      allCases = allCases.concat(batch);
+
+      if (!batch.length || allCases.length >= totalCases) {
+        break;
+      }
+
+      page += 1;
     }
 
-    return data || null;
+    return {
+      cases: allCases,
+      total_cases: totalCases || allCases.length,
+    };
   }
   async function fetchJobStatus(jobId) {
     const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
@@ -805,8 +835,10 @@ export default function GeneratorPage({
                         Generated Test Cases
                       </div>
                       <div style={styles.tablePaneMeta}>
-                        {tableRows.length} row
-                        {tableRows.length === 1 ? "" : "s"}
+                        {run.report?.total_cases || tableRows.length} row
+                        {(run.report?.total_cases || tableRows.length) === 1
+                          ? ""
+                          : "s"}
                       </div>
                     </div>
 

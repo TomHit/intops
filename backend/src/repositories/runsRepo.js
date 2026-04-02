@@ -1,5 +1,14 @@
 import { pool } from "../db/postgres.js";
 
+function normalizeIncludeTypes(includeTypes) {
+  return Array.isArray(includeTypes) ? includeTypes : [];
+}
+
+function normalizeCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 export async function createGenerationRun({
   projectId,
   orgId,
@@ -9,7 +18,12 @@ export async function createGenerationRun({
   env,
   authProfile,
   endpointCount,
+  progressTotal,
 }) {
+  const safeEndpointCount = normalizeCount(endpointCount);
+  const safeProgressTotal =
+    progressTotal == null ? safeEndpointCount : normalizeCount(progressTotal);
+
   const query = `
     INSERT INTO generation_runs (
       project_id,
@@ -24,7 +38,7 @@ export async function createGenerationRun({
       progress_total,
       started_at
     )
-    VALUES ($1, $2, $3, 'running', $4, $5::jsonb, $6, $7, $8, $8, NOW())
+    VALUES ($1, $2, $3, 'running', $4, $5::jsonb, $6, $7, $8, $9, NOW())
     RETURNING *
   `;
 
@@ -32,15 +46,16 @@ export async function createGenerationRun({
     projectId,
     orgId,
     createdBy,
-    generationMode,
-    JSON.stringify(includeTypes || []),
-    env || null,
-    authProfile || null,
-    endpointCount || 0,
+    generationMode ?? null,
+    JSON.stringify(normalizeIncludeTypes(includeTypes)),
+    env ?? null,
+    authProfile ?? null,
+    safeEndpointCount,
+    safeProgressTotal,
   ];
 
   const result = await pool.query(query, values);
-  return result.rows[0];
+  return result.rows[0] ?? null;
 }
 
 export async function completeGenerationRun(runId, caseCount) {
@@ -55,8 +70,8 @@ export async function completeGenerationRun(runId, caseCount) {
     RETURNING *
   `;
 
-  const result = await pool.query(query, [runId, caseCount]);
-  return result.rows[0] || null;
+  const result = await pool.query(query, [runId, normalizeCount(caseCount)]);
+  return result.rows[0] ?? null;
 }
 
 export async function failGenerationRun(runId, errorMessage) {
@@ -70,8 +85,8 @@ export async function failGenerationRun(runId, errorMessage) {
     RETURNING *
   `;
 
-  const result = await pool.query(query, [runId, errorMessage || null]);
-  return result.rows[0] || null;
+  const result = await pool.query(query, [runId, errorMessage ?? null]);
+  return result.rows[0] ?? null;
 }
 
 export async function updateRunProgress(runId, current) {
@@ -82,8 +97,8 @@ export async function updateRunProgress(runId, current) {
     RETURNING run_id, progress_current, progress_total, status
   `;
 
-  const result = await pool.query(query, [runId, current]);
-  return result.rows[0] || null;
+  const result = await pool.query(query, [runId, normalizeCount(current)]);
+  return result.rows[0] ?? null;
 }
 
 export async function getRunById(runId) {
@@ -91,8 +106,9 @@ export async function getRunById(runId) {
     `SELECT * FROM generation_runs WHERE run_id = $1`,
     [runId],
   );
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
+
 export async function deleteRunById(runId) {
   await pool.query(`DELETE FROM generation_runs WHERE run_id = $1`, [runId]);
 }

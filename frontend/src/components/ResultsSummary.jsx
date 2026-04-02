@@ -22,11 +22,23 @@ export default function ResultsSummary({
   const suiteCount = Array.isArray(testplan?.suites)
     ? testplan.suites.length
     : 0;
-  const endpointCount = new Set(
+
+  const loadedEndpointCount = new Set(
     (rows || []).map(
       (r) => `${r.api_details?.method || ""} ${r.api_details?.path || ""}`,
     ),
   ).size;
+
+  const generatedCasesCount =
+    typeof report?.total_cases === "number" && report.total_cases > 0
+      ? report.total_cases
+      : rows.length;
+
+  const endpointCount =
+    typeof report?.endpoint_count === "number" && report.endpoint_count > 0
+      ? report.endpoint_count
+      : loadedEndpointCount;
+
   const reviewCount =
     typeof report?.needs_review === "number"
       ? report.needs_review
@@ -34,7 +46,11 @@ export default function ResultsSummary({
 
   return (
     <div style={styles.wrap}>
-      <StatCard label="Generated cases" value={rows.length} accent="#c7d2fe" />
+      <StatCard
+        label="Generated cases"
+        value={generatedCasesCount}
+        accent="#c7d2fe"
+      />
       <StatCard label="Suites" value={suiteCount} accent="#bfdbfe" />
       <StatCard
         label="Endpoints covered"

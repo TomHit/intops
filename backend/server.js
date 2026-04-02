@@ -11,27 +11,14 @@ import {
 import { pool, testDbConnection } from "./src/db/postgres.js";
 import { createJob, getJob, listJobs } from "./src/jobs/jobStore.js";
 import { runGenerationJob } from "./src/jobs/generationWorker.js";
-
 import { validateSpecQuality } from "./src/services/specQualityValidator.js";
 
-import {
-  createGenerationRun,
-  completeGenerationRun,
-  failGenerationRun,
-} from "./src/repositories/runsRepo.js";
-import {
-  insertGeneratedCases,
-  countCasesByRun,
-  deleteCasesByRun,
-  getCasesByRunPaginated,
-} from "./src/repositories/casesRepo.js";
+import { createGenerationRun } from "./src/repositories/runsRepo.js";
+import { getCasesByRunPaginated } from "./src/repositories/casesRepo.js";
 import {
   createProjectRecord,
   getProjectById,
-  setProjectCurrentRun,
-  setProjectGenerationStatus,
 } from "./src/repositories/projectsRepo.js";
-import { generateTestPlan } from "./src/services/generator.js";
 
 process.on("uncaughtException", (err) =>
   console.error("UNCAUGHT EXCEPTION:", err),
@@ -256,36 +243,61 @@ app.get("/api/projects/:id/endpoints/full", async (req, res) => {
 app.post("/api/generate", async (req, res) => {
   try {
     const payload = req.body || {};
-    const summary = summarizeGenerateRequest(payload);
 
-    console.log("POST /api/generate", summary);
+    const projectId = String(payload.project_id || "").trim();
+    if (!projectId) {
+      return res.status(400).json({ message: "project_id is required" });
+    }
+
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // 🔥 IMPORTANT: backend owns identity (replace later with auth)
+    const createdBy = "system"; // TEMP (later req.user.id)
+
+    const endpoints = Array.isArray(payload.endpoints) ? payload.endpoints : [];
+
+    const run = await createGenerationRun({
+      projectId,
+      orgId: project.org_id,
+      createdBy,
+      generationMode: payload.generation_mode || "balanced",
+      includeTypes: payload.include || ["contract", "schema"],
+      env: payload.env || "staging",
+      authProfile: payload.auth_profile || "",
+      endpointCount: endpoints.length,
+    });
 
     const job = createJob({
       type: "generate_test_plan",
-      request_summary: summary,
+      request_summary: summarizeGenerateRequest(payload),
+      meta: { run_id: run.run_id }, // 👈 link job ↔ run
     });
 
     setImmediate(() => {
-      runGenerationJob(job.job_id, payload);
+      runGenerationJob(job.job_id, {
+        ...payload,
+        created_by: createdBy,
+        run_id: run.run_id,
+      });
     });
 
     return res.status(202).json({
       ok: true,
       job_id: job.job_id,
-      status: job.status,
-      created_at: job.created_at,
-      message: "Generation job accepted",
+      run_id: run.run_id, // 👈 CRITICAL
+      status: "queued",
     });
   } catch (e) {
-    console.error("GENERATE JOB CREATE ERROR:", e);
+    console.error("GENERATE ERROR:", e);
     return res.status(500).json({
       ok: false,
       message: e?.message || String(e),
-      stack: e?.stack || null,
     });
   }
 });
-
 // Job status
 app.get("/api/jobs/:jobId", (req, res) => {
   try {
@@ -449,90 +461,6 @@ testDbConnection()
   .catch((err) => {
     console.error("PostgreSQL connection failed:", err);
   });
-
-app.post("/api/generate-db-test", async (req, res) => {
-  try {
-    const payload = req.body || {};
-    const projectId = String(payload.project_id || "").trim();
-    const createdBy = String(payload.created_by || "").trim();
-
-    if (!projectId || !createdBy) {
-      return res.status(400).json({
-        ok: false,
-        message: "project_id and created_by are required",
-      });
-    }
-
-    const project = await getProjectById(projectId);
-    if (!project) {
-      return res.status(404).json({
-        ok: false,
-        message: "Project not found",
-      });
-    }
-
-    await setProjectGenerationStatus(projectId, "running");
-
-    const run = await createGenerationRun({
-      projectId,
-      orgId: project.org_id,
-      createdBy,
-      generationMode: payload.generation_mode || "balanced",
-      includeTypes: payload.include || ["contract", "schema"],
-      env: payload.env || "staging",
-      authProfile: payload.auth_profile || "",
-      endpointCount: Number(payload.endpoints_n || 0),
-    });
-
-    try {
-      const result = await generateTestPlan(payload);
-
-      const caseRows = (Array.isArray(result?.cases) ? result.cases : []).map(
-        (tc) => ({
-          case_id: tc.id,
-          run_id: run.run_id,
-          project_id: projectId,
-          org_id: project.org_id,
-          method: String(tc?.api_details?.method || "GET").toUpperCase(),
-          path: tc?.api_details?.path || "/",
-          test_type: tc.test_type || "contract",
-          priority: tc.priority || null,
-          title: tc.title || "",
-          module: tc.module || null,
-          payload: tc,
-        }),
-      );
-
-      await insertGeneratedCases(caseRows);
-
-      const totalCases = await countCasesByRun(run.run_id);
-      const previousRunId = project.current_run_id;
-
-      await completeGenerationRun(run.run_id, totalCases);
-      await setProjectCurrentRun(projectId, run.run_id);
-
-      if (previousRunId) {
-        await deleteCasesByRun(previousRunId);
-      }
-
-      return res.json({
-        ok: true,
-        run_id: run.run_id,
-        case_count: totalCases,
-      });
-    } catch (err) {
-      await failGenerationRun(run.run_id, err?.message || "Generation failed");
-      await setProjectGenerationStatus(projectId, "idle");
-      throw err;
-    }
-  } catch (e) {
-    console.error("GENERATE DB TEST ERROR:", e);
-    return res.status(500).json({
-      ok: false,
-      message: e?.message || String(e),
-    });
-  }
-});
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
 app.listen(PORT, () => {

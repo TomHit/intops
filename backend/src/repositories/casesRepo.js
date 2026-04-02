@@ -1,6 +1,21 @@
 import { pool } from "../db/postgres.js";
 
-export async function insertGeneratedCases(caseRows = []) {
+const DEFAULT_INSERT_CHUNK_SIZE = 200;
+
+function normalizePositiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function chunkArray(items, chunkSize) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+async function insertGeneratedCasesChunk(client, caseRows) {
   if (!Array.isArray(caseRows) || caseRows.length === 0) {
     return 0;
   }
@@ -23,10 +38,10 @@ export async function insertGeneratedCases(caseRows = []) {
       row.method,
       row.path,
       row.test_type,
-      row.priority || null,
+      row.priority ?? null,
       row.title,
-      row.module || null,
-      JSON.stringify(row.payload || {}),
+      row.module ?? null,
+      JSON.stringify(row.payload ?? {}),
     );
   });
 
@@ -46,10 +61,37 @@ export async function insertGeneratedCases(caseRows = []) {
     )
     VALUES ${placeholders.join(",")}
     ON CONFLICT (case_id) DO NOTHING
+    RETURNING case_id
   `;
 
-  await pool.query(query, values);
-  return caseRows.length;
+  const result = await client.query(query, values);
+  return result.rowCount || 0;
+}
+
+export async function insertGeneratedCases(caseRows = [], options = {}) {
+  if (!Array.isArray(caseRows) || caseRows.length === 0) {
+    return 0;
+  }
+
+  const chunkSize = normalizePositiveInt(
+    options.chunkSize,
+    DEFAULT_INSERT_CHUNK_SIZE,
+  );
+
+  const client = await pool.connect();
+
+  try {
+    let insertedCount = 0;
+    const chunks = chunkArray(caseRows, chunkSize);
+
+    for (const chunk of chunks) {
+      insertedCount += await insertGeneratedCasesChunk(client, chunk);
+    }
+
+    return insertedCount;
+  } finally {
+    client.release();
+  }
 }
 
 export async function countCasesByRun(runId) {

@@ -1,388 +1,616 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import TestCaseTable from "../components/TestCaseTable";
+import TestCaseDrawer from "../components/TestCaseDrawer";
+import { TEST_CASE_CSV_COLUMNS } from "../utils/testCaseColumns";
 
-function badgeForType(type) {
-  const value = String(type || "").toLowerCase();
+const PAGE_SIZE = 500;
 
-  if (value === "contract") return { bg: "#eef2ff", color: "#4338ca" };
-  if (value === "schema") return { bg: "#ecfeff", color: "#155e75" };
-  if (value === "negative") return { bg: "#fff7ed", color: "#c2410c" };
-  if (value === "auth") return { bg: "#fdf2f8", color: "#be185d" };
-
-  return { bg: "#f1f5f9", color: "#334155" };
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
-function reviewBadge(needsReview) {
-  if (needsReview) {
-    return {
-      text: "Needs review",
-      bg: "#fff7d6",
-      color: "#92400e",
-      border: "#fde68a",
-    };
+function summarizeTestData(testData) {
+  if (!testData || typeof testData !== "object") return "-";
+
+  const pathCount = Object.keys(testData.path_params || {}).length;
+  const queryCount = Object.keys(testData.query_params || {}).length;
+  const headerCount = Object.keys(testData.headers || {}).length;
+  const cookieCount = Object.keys(testData.cookies || {}).length;
+  const hasBody =
+    testData.request_body !== undefined && testData.request_body !== null;
+
+  return `path:${pathCount} query:${queryCount} headers:${headerCount} cookies:${cookieCount} body:${hasBody ? "yes" : "no"}`;
+}
+
+function deriveTableRows(testplan) {
+  const rows = [];
+  if (!testplan?.suites) return rows;
+
+  testplan.suites.forEach((suite, si) => {
+    safeArray(suite.cases).forEach((tc, ci) => {
+      rows.push({
+        suite_id: suite.suite_id || "",
+        suite_name: suite.name || suite.suite_id || "Untitled Suite",
+        id: tc.id || "",
+        title: tc.title || "",
+        module: tc.module || "",
+        test_type: tc.test_type || "",
+        priority: tc.priority || "",
+        objective: tc.objective || "",
+        preconditions: safeArray(tc.preconditions),
+        test_data: tc.test_data || {},
+        test_data_summary: summarizeTestData(tc.test_data),
+        steps: safeArray(tc.steps),
+        expected_results: safeArray(tc.expected_results),
+        api_details: tc.api_details || {},
+        validation_focus: safeArray(tc.validation_focus),
+        references: safeArray(tc.references),
+        needs_review: !!tc.needs_review,
+        review_notes: tc.review_notes || "",
+        ref: { suiteIndex: si, caseIndex: ci },
+      });
+    });
+  });
+
+  return rows;
+}
+
+function toCsvValue(v) {
+  const s = String(v ?? "");
+  const escaped = s.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function buildCsvFromTable(rows) {
+  const header = TEST_CASE_CSV_COLUMNS.map((c) => c.label);
+  const lines = [header.join(",")];
+
+  for (const r of rows) {
+    const values = TEST_CASE_CSV_COLUMNS.map((c) => toCsvValue(c.getValue(r)));
+    lines.push(values.join(","));
   }
 
+  return lines.join("\n");
+}
+
+function downloadText(filename, text, mime = "application/octet-stream") {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function normalizeFetchedCase(tc, suiteIndex = 0, caseIndex = 0) {
   return {
-    text: "Ready",
-    bg: "#ecfdf5",
-    color: "#166534",
-    border: "#bbf7d0",
+    suite_id: tc?.suite_id || "",
+    suite_name: tc?.suite_name || tc?.suite_id || "Untitled Suite",
+    id: tc?.id || "",
+    title: tc?.title || "",
+    module: tc?.module || "",
+    test_type: tc?.test_type || "",
+    priority: tc?.priority || "",
+    objective: tc?.objective || "",
+    preconditions: safeArray(tc?.preconditions),
+    test_data: tc?.test_data || {},
+    test_data_summary: summarizeTestData(tc?.test_data),
+    steps: safeArray(tc?.steps),
+    expected_results: safeArray(tc?.expected_results),
+    api_details: tc?.api_details || {},
+    validation_focus: safeArray(tc?.validation_focus),
+    references: safeArray(tc?.references),
+    needs_review: !!tc?.needs_review,
+    review_notes: tc?.review_notes || "",
+    ref: { suiteIndex, caseIndex },
   };
 }
 
-function shortText(value, max = 70) {
-  const s = String(value ?? "");
-  return s.length > max ? `${s.slice(0, max)}…` : s;
+function buildTestplanFromRows(rows, generatedRun) {
+  const suitesMap = new Map();
+
+  rows.forEach((row) => {
+    const suiteId = row.suite_id || "default_suite";
+    const suiteName = row.suite_name || suiteId || "Untitled Suite";
+
+    if (!suitesMap.has(suiteId)) {
+      suitesMap.set(suiteId, {
+        suite_id: suiteId,
+        name: suiteName,
+        endpoints: [],
+        cases: [],
+      });
+    }
+
+    suitesMap.get(suiteId).cases.push({
+      id: row.id || "",
+      title: row.title || "",
+      module: row.module || "",
+      test_type: row.test_type || "",
+      priority: row.priority || "",
+      objective: row.objective || "",
+      preconditions: safeArray(row.preconditions),
+      test_data: row.test_data || {},
+      steps: safeArray(row.steps),
+      expected_results: safeArray(row.expected_results),
+      api_details: row.api_details || {},
+      validation_focus: safeArray(row.validation_focus),
+      references: safeArray(row.references),
+      needs_review: !!row.needs_review,
+      review_notes: row.review_notes || "",
+    });
+  });
+
+  return {
+    project: generatedRun?.testplan?.project || {
+      project_id: generatedRun?.project_id || "",
+      run_id: generatedRun?.run_id || "",
+    },
+    generation: generatedRun?.testplan?.generation || {
+      run_id: generatedRun?.run_id || "",
+      source: "db_cases",
+    },
+    suites: Array.from(suitesMap.values()),
+  };
 }
 
-export default function TestCaseTable({
-  rows = [],
-  onRowClick,
-  loading = false,
-}) {
-  if (loading) {
-    return (
-      <div style={styles.skeletonWrap}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <div key={n} style={styles.skeletonRow} />
-        ))}
-      </div>
+async function fetchAllRunCases(runId, signal) {
+  let page = 1;
+  let totalCases = 0;
+  const collected = [];
+
+  while (true) {
+    const res = await fetch(
+      `/api/runs/${encodeURIComponent(runId)}/cases?page=${page}&page_size=${PAGE_SIZE}`,
+      {
+        method: "GET",
+        credentials: "include",
+        signal,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`Failed to load run cases (${res.status})`);
+    }
+
+    const data = await res.json();
+    const batch = safeArray(data?.cases);
+
+    totalCases = Number(data?.total_cases || 0);
+    collected.push(...batch);
+
+    if (!batch.length || collected.length >= totalCases) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return {
+    totalCases,
+    cases: collected,
+  };
+}
+
+export default function TestCasesPage({ projectId, generatedRun }) {
+  const runId = generatedRun?.run_id || "";
+  const fallbackTestplan = generatedRun?.testplan || null;
+  const fallbackRows = useMemo(
+    () => deriveTableRows(fallbackTestplan),
+    [fallbackTestplan],
+  );
+
+  const [rows, setRows] = useState(fallbackRows);
+  const [totalCases, setTotalCases] = useState(fallbackRows.length);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  const [selectedSuiteId, setSelectedSuiteId] = useState("ALL");
+  const [selectedType, setSelectedType] = useState("ALL");
+  const [selectedPriority, setSelectedPriority] = useState("ALL");
+  const [reviewFilter, setReviewFilter] = useState("ALL");
+  const [query, setQuery] = useState("");
+  const [drawer, setDrawer] = useState({ open: false, row: null });
+
+  useEffect(() => {
+    setSelectedSuiteId("ALL");
+    setSelectedType("ALL");
+    setSelectedPriority("ALL");
+    setReviewFilter("ALL");
+    setQuery("");
+    setDrawer({ open: false, row: null });
+  }, [runId]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+
+    async function loadAllCases() {
+      if (!runId) {
+        setRows(fallbackRows);
+        setTotalCases(fallbackRows.length);
+        setLoadError("");
+        return;
+      }
+
+      setLoading(true);
+      setLoadError("");
+
+      try {
+        const result = await fetchAllRunCases(runId, controller.signal);
+
+        if (!active) return;
+
+        const normalizedRows = result.cases.map((tc, index) =>
+          normalizeFetchedCase(tc, 0, index),
+        );
+
+        setRows(normalizedRows);
+        setTotalCases(result.totalCases || normalizedRows.length);
+      } catch (err) {
+        if (!active || err?.name === "AbortError") return;
+
+        setRows(fallbackRows);
+        setTotalCases(fallbackRows.length);
+        setLoadError(
+          err?.message ||
+            "Failed to load all cases from server. Showing fallback data.",
+        );
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadAllCases();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [runId, fallbackRows]);
+
+  const testplan = useMemo(() => {
+    if (rows.length) return buildTestplanFromRows(rows, generatedRun);
+    return fallbackTestplan;
+  }, [rows, generatedRun, fallbackTestplan]);
+
+  const suiteOptions = useMemo(() => {
+    const map = new Map();
+
+    for (const row of rows) {
+      if (!map.has(row.suite_id)) {
+        map.set(row.suite_id, {
+          suite_id: row.suite_id,
+          suite_name: row.suite_name,
+          count: 0,
+        });
+      }
+      map.get(row.suite_id).count += 1;
+    }
+
+    return Array.from(map.values());
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      const suiteOk =
+        selectedSuiteId === "ALL" ? true : row.suite_id === selectedSuiteId;
+      const typeOk =
+        selectedType === "ALL" ? true : row.test_type === selectedType;
+      const priorityOk =
+        selectedPriority === "ALL" ? true : row.priority === selectedPriority;
+      const reviewOk =
+        reviewFilter === "ALL"
+          ? true
+          : reviewFilter === "YES"
+            ? row.needs_review
+            : !row.needs_review;
+
+      const haystack = [
+        row.id,
+        row.title,
+        row.module,
+        row.suite_name,
+        row.api_details?.method,
+        row.api_details?.path,
+        row.objective,
+        row.review_notes,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      const queryOk = !q || haystack.includes(q);
+
+      return suiteOk && typeOk && priorityOk && reviewOk && queryOk;
+    });
+  }, [
+    rows,
+    selectedSuiteId,
+    selectedType,
+    selectedPriority,
+    reviewFilter,
+    query,
+  ]);
+
+  const typeOptions = useMemo(() => {
+    return Array.from(
+      new Set(rows.map((r) => r.test_type).filter(Boolean)),
+    ).sort();
+  }, [rows]);
+
+  const priorityOptions = useMemo(() => {
+    return Array.from(
+      new Set(rows.map((r) => r.priority).filter(Boolean)),
+    ).sort();
+  }, [rows]);
+
+  function exportJson() {
+    if (!testplan) return;
+    downloadText(
+      `test_cases_${runId || "export"}.json`,
+      JSON.stringify(testplan, null, 2),
+      "application/json",
     );
   }
 
-  if (!rows || rows.length === 0) {
+  function exportCsv() {
+    if (!filteredRows.length) return;
+    const csv = buildCsvFromTable(filteredRows);
+    downloadText(`test_cases_${runId || "export"}.csv`, csv, "text/csv");
+  }
+
+  if (!testplan && !loading) {
     return (
-      <div style={styles.empty}>
-        <div style={styles.emptyTitle}>No test cases yet</div>
-        <div style={styles.emptySubtle}>
-          Generate tests to preview AI-built cases here.
-        </div>
+      <div className="page-card">
+        <h3>Test Cases</h3>
+        <p className="muted">
+          No generated test cases yet. Go to Generate Tests, run generation,
+          then open them here.
+        </p>
       </div>
     );
   }
 
   return (
-    <div style={styles.wrap}>
-      <div style={styles.tableShell}>
-        <div style={styles.tableHead}>
-          <div>ID</div>
-          <div>Title</div>
-          <div>Endpoint</div>
-          <div>Type</div>
-          <div>Priority</div>
-          <div>Review</div>
-          <div style={{ textAlign: "right" }}>Action</div>
+    <div style={styles.page}>
+      <style>{`
+        @media (max-width: 1100px) {
+          .tc-toolbar {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+
+          .tc-toolbar-actions {
+            justify-content: flex-start !important;
+          }
+        }
+
+        @media (max-width: 900px) {
+          .tc-filter-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
+      <section style={styles.toolbarCard}>
+        <div className="tc-toolbar" style={styles.toolbarRow}>
+          <div>
+            <div style={styles.panelTitle}>Test Cases</div>
+            <div style={styles.panelSubtle}>
+              Project: {projectId || "Select a project first"}
+            </div>
+            <div style={styles.panelSubtle}>
+              Run: {runId || "-"} · Loaded {rows.length} of {totalCases}
+            </div>
+            {!!loadError && <div style={styles.errorText}>{loadError}</div>}
+          </div>
+
+          <div className="tc-toolbar-actions" style={styles.toolbarActions}>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={exportJson}
+            >
+              Export JSON
+            </button>
+            <button type="button" className="secondary-btn" onClick={exportCsv}>
+              Export CSV
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={styles.filterCard}>
+        <div className="tc-filter-grid" style={styles.filterGrid}>
+          <div>
+            <label style={styles.label}>Search</label>
+            <input
+              type="text"
+              placeholder="Search case ID, title, endpoint..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label style={styles.label}>Suite</label>
+            <select
+              value={selectedSuiteId}
+              onChange={(e) => setSelectedSuiteId(e.target.value)}
+            >
+              <option value="ALL">All suites</option>
+              {suiteOptions.map((suite) => (
+                <option key={suite.suite_id} value={suite.suite_id}>
+                  {suite.suite_name} ({suite.count})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={styles.label}>Type</label>
+            <select
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+            >
+              <option value="ALL">All types</option>
+              {typeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={styles.label}>Priority</label>
+            <select
+              value={selectedPriority}
+              onChange={(e) => setSelectedPriority(e.target.value)}
+            >
+              <option value="ALL">All priorities</option>
+              {priorityOptions.map((priority) => (
+                <option key={priority} value={priority}>
+                  {priority}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={styles.label}>Review</label>
+            <select
+              value={reviewFilter}
+              onChange={(e) => setReviewFilter(e.target.value)}
+            >
+              <option value="ALL">All</option>
+              <option value="YES">Needs review</option>
+              <option value="NO">Ready</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section style={styles.tableCard}>
+        <div style={styles.tableHeadRow}>
+          <div style={styles.tableTitle}>Cases</div>
+          <div style={styles.metaText}>
+            {loading
+              ? "Loading all generated cases..."
+              : `${filteredRows.length} rows shown${filteredRows.length !== rows.length ? ` · ${rows.length} loaded total` : ""}`}
+          </div>
         </div>
 
-        <div style={styles.bodyWrap}>
-          {rows.map((r) => {
-            const review = reviewBadge(r.needs_review);
-            const typeBadge = badgeForType(r.test_type);
+        <TestCaseTable
+          rows={filteredRows}
+          loading={loading}
+          onRowClick={(row) => setDrawer({ open: true, row })}
+        />
+      </section>
 
-            const endpoint =
-              `${r.api_details?.method || ""} ${r.api_details?.path || ""}`.trim();
-
-            return (
-              <div
-                key={`${r.suite_id || "suite"}-${r.id}`}
-                style={styles.row}
-                role="button"
-                tabIndex={0}
-                onClick={() => onRowClick?.(r)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") onRowClick?.(r);
-                }}
-              >
-                <div style={styles.idCell} title={r.id}>
-                  {r.id?.slice(0, 12) + "..."}
-                </div>
-
-                <div style={styles.titleCell}>
-                  <div style={styles.title} title={r.title}>
-                    {shortText(r.title, 90)}
-                  </div>
-
-                  <div style={styles.metaRow}>
-                    {r.module ? (
-                      <span style={styles.moduleChip} title={r.module}>
-                        {shortText(r.module, 24)}
-                      </span>
-                    ) : null}
-
-                    {r.validation_focus?.[0] ? (
-                      <span
-                        style={styles.focusChip}
-                        title={r.validation_focus[0]}
-                      >
-                        {shortText(r.validation_focus[0], 28)}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div style={styles.endpoint} title={endpoint}>
-                  {shortText(endpoint, 88)}
-                </div>
-
-                <div>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      background: typeBadge.bg,
-                      color: typeBadge.color,
-                    }}
-                  >
-                    {String(r.test_type || "-").toUpperCase()}
-                  </span>
-                </div>
-
-                <div style={styles.priorityWrap}>
-                  <span style={styles.priorityBadge(r.priority)}>
-                    {r.priority || "-"}
-                  </span>
-                </div>
-
-                <div>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      background: review.bg,
-                      color: review.color,
-                      border: `1px solid ${review.border}`,
-                    }}
-                  >
-                    {review.text}
-                  </span>
-                </div>
-
-                <div style={{ textAlign: "right" }}>
-                  <button
-                    type="button"
-                    style={styles.viewBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRowClick?.(r);
-                    }}
-                  >
-                    View
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <TestCaseDrawer
+        open={drawer.open}
+        row={drawer.row}
+        onClose={() => setDrawer({ open: false, row: null })}
+      />
     </div>
   );
 }
 
-const GRID_TEMPLATE =
-  "140px minmax(0, 2.6fr) minmax(0, 2.2fr) 110px 90px 120px 110px";
-
 const styles = {
-  wrap: {
+  page: {
     display: "grid",
-    gap: 10,
+    gap: 12,
+    width: "100%",
     minWidth: 0,
+    padding: 0,
+    margin: 0,
   },
-
-  tableShell: {
-    border: "1px solid #e6eaf2",
-    borderRadius: 16,
-    overflowX: "auto",
-    overflowY: "hidden",
+  toolbarCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
     background: "#fff",
-    minWidth: 0,
+    padding: 16,
   },
-
-  tableHead: {
-    display: "grid",
-    gridTemplateColumns: GRID_TEMPLATE,
-    gap: 14,
-    padding: "14px 16px",
-    background: "#f8fafc",
-    borderBottom: "1px solid #e6eaf2",
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#334155",
-    letterSpacing: 0.2,
-    textTransform: "uppercase",
-    alignItems: "center",
-    minWidth: 0,
-  },
-
-  bodyWrap: {
-    display: "grid",
-    minWidth: 0,
-  },
-
-  row: {
-    display: "grid",
-    gridTemplateColumns: GRID_TEMPLATE,
-    gap: 14,
-    padding: "15px 16px",
-    background: "#fff",
-    alignItems: "center",
-    cursor: "pointer",
-    transition: "background 0.15s ease, box-shadow 0.15s ease",
-    borderBottom: "1px solid #eef2f7",
-    minWidth: 0,
-  },
-
-  idCell: {
-    minWidth: 0,
-    maxWidth: "140px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    display: "block",
-    fontSize: 11,
-    fontWeight: 600,
-    color: "#94a3b8",
-    lineHeight: 1.3,
-  },
-
-  titleCell: {
-    minWidth: 0,
-    maxWidth: "100%",
-    overflow: "hidden",
-    paddingLeft: 0,
-  },
-
-  title: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#020617",
-    marginBottom: 4,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    lineHeight: 1.35,
-  },
-
-  endpoint: {
-    minWidth: 0,
-    fontSize: 13,
-    color: "#334155",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-
-  badge: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "6px 10px",
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-  },
-
-  metaRow: {
+  toolbarRow: {
     display: "flex",
-    gap: 8,
-    alignItems: "center",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
     flexWrap: "wrap",
-    minWidth: 0,
   },
-
-  moduleChip: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#6366f1",
-    background: "#eef2ff",
-    padding: "2px 8px",
-    borderRadius: 999,
-    maxWidth: "100%",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
-  focusChip: {
-    fontSize: 11,
-    color: "#475569",
-    background: "#f1f5f9",
-    padding: "2px 8px",
-    borderRadius: 999,
-    maxWidth: "100%",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
-  priorityWrap: {
-    minWidth: 0,
-  },
-
-  priorityBadge: (p) => {
-    const map = {
-      P0: { bg: "#fee2e2", color: "#991b1b" },
-      P1: { bg: "#fff7ed", color: "#9a3412" },
-      P2: { bg: "#ecfeff", color: "#155e75" },
-      P3: { bg: "#f1f5f9", color: "#334155" },
-    };
-
-    const cfg = map[p] || map.P2;
-
-    return {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      background: cfg.bg,
-      color: cfg.color,
-      padding: "5px 10px",
-      borderRadius: 999,
-      fontWeight: 800,
-      fontSize: 12,
-      whiteSpace: "nowrap",
-    };
-  },
-
-  viewBtn: {
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #d6dce8",
-    background: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-    color: "#0f172a",
-    whiteSpace: "nowrap",
-  },
-
-  empty: {
-    padding: 28,
-    borderRadius: 16,
-    background: "#f8fafc",
-    border: "1px dashed #d6dce8",
-    color: "#475569",
-    textAlign: "center",
-  },
-
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: 800,
-    color: "#0f172a",
-    marginBottom: 6,
-  },
-
-  emptySubtle: {
-    fontSize: 14,
-    color: "#64748b",
-  },
-
-  skeletonWrap: {
-    display: "grid",
+  toolbarActions: {
+    display: "flex",
     gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
-
-  skeletonRow: {
-    height: 66,
-    borderRadius: 16,
-    background: "linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%)",
-    backgroundSize: "400% 100%",
-    animation: "pulseShimmer 1.4s ease infinite",
+  panelTitle: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#111827",
+    marginBottom: 4,
+  },
+  panelSubtle: {
+    fontSize: 13,
+    color: "#6b7280",
+    lineHeight: 1.4,
+  },
+  errorText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#b91c1c",
+    lineHeight: 1.4,
+  },
+  filterCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    background: "#fff",
+    padding: 16,
+  },
+  filterGrid: {
+    display: "grid",
+    gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+    gap: 12,
+    alignItems: "end",
+  },
+  label: {
+    display: "block",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#475569",
+    marginBottom: 8,
+  },
+  tableCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    background: "#fff",
+    padding: 16,
+    minWidth: 0,
+  },
+  tableHeadRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+    marginBottom: 12,
+  },
+  tableTitle: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#111827",
+  },
+  metaText: {
+    fontSize: 13,
+    color: "#6b7280",
   },
 };

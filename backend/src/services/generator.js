@@ -906,18 +906,15 @@ export async function generateTestPlan(payload) {
   const BATCH_SIZE = 2;
   const endpointBatches = chunkArray(eligibleEndpointRecords, BATCH_SIZE);
   const globalCaseIdGen = createCaseIdGenerator(eligibleEndpointRecords);
-  const allCases = [];
 
   console.log("RUN ID:", runId);
   console.log("TOTAL ELIGIBLE:", eligibleEndpointRecords.length);
   console.log("TOTAL BATCHES:", endpointBatches.length);
 
+  const batchesOutput = [];
+
   for (let i = 0; i < endpointBatches.length; i++) {
     const batch = endpointBatches[i];
-
-    console.log(
-      `Processing batch ${i + 1}/${endpointBatches.length} (${batch.length} endpoints)`,
-    );
 
     const batchResult = await buildDeterministicTestPlan({
       project: projectBlock,
@@ -927,15 +924,9 @@ export async function generateTestPlan(payload) {
       fallbackBaseUrl,
     });
 
-    console.log(`BATCH ${i + 1} SUMMARY:`, batchResult.batch_summary);
-
-    allCases.push(...(batchResult.cases || []));
-
-    const mem = process.memoryUsage();
-    console.log(`MEMORY AFTER BATCH ${i + 1}:`, {
-      rss_mb: Math.round(mem.rss / 1024 / 1024),
-      heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
-      heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+    batchesOutput.push({
+      batch_index: i + 1,
+      cases: batchResult.cases || [],
     });
 
     await new Promise((resolve) => setImmediate(resolve));
@@ -975,15 +966,15 @@ export async function generateTestPlan(payload) {
       enabled: true,
       batch_size: BATCH_SIZE,
       total_batches: endpointBatches.length,
-      file_format: "db-migration-test",
+      file_format: "db-batch-stream",
     },
 
     result_storage: {
-      mode: "db-migration-test",
+      mode: "db-batch-stream",
       message:
-        "Cases are returned per generation run for database insertion during migration testing.",
+        "Cases are returned as endpoint batches for incremental database insertion.",
     },
 
-    cases: allCases,
+    batches: batchesOutput,
   };
 }
