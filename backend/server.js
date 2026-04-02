@@ -2,6 +2,7 @@ import express from "express";
 import fs from "fs/promises";
 import path from "path";
 import cors from "cors";
+import crypto from "crypto";
 
 import { loadOpenApiDoc } from "./src/services/openapiLoader.js";
 import {
@@ -10,6 +11,7 @@ import {
 } from "./src/services/openapiParser.js";
 import { pool, testDbConnection } from "./src/db/postgres.js";
 import { createJob, getJob, listJobs } from "./src/jobs/jobStore.js";
+import { subscribeJob } from "./src/jobs/jobEvents.js";
 import { runGenerationJob } from "./src/jobs/generationWorker.js";
 import { validateSpecQuality } from "./src/services/specQualityValidator.js";
 
@@ -41,6 +43,14 @@ app.use((req, res, next) => {
 
 const PROJECTS_DIR = path.join(process.cwd(), "projects");
 
+function normalizeOrgNameFromEmail(email = "") {
+  const domain = String(email).split("@")[1] || "";
+  const base = domain.split(".")[0] || "organization";
+  return (
+    base.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) ||
+    "Organization"
+  );
+}
 function summarizeGenerateRequest(payload = {}) {
   return {
     project_id: payload?.project_id || null,
@@ -98,6 +108,123 @@ async function loadAllProjects() {
 // Health
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+app.post("/api/auth/org-login", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    const password = String(req.body?.password || "").trim();
+
+    if (!email) {
+      return res.status(400).json({ ok: false, message: "email is required" });
+    }
+
+    if (!password) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "password is required" });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const domain = email.split("@")[1] || "";
+      const orgSlug = domain ? domain.replace(/\./g, "_") : "default_org";
+      const orgName = normalizeOrgNameFromEmail(email);
+      const fullName = email.split("@")[0] || "User";
+
+      let org = null;
+      const orgLookup = await client.query(
+        `SELECT * FROM organizations WHERE slug = $1 LIMIT 1`,
+        [orgSlug],
+      );
+
+      if (orgLookup.rows.length > 0) {
+        org = orgLookup.rows[0];
+      } else {
+        const orgId = crypto.randomUUID();
+        const orgInsert = await client.query(
+          `
+          INSERT INTO organizations (org_id, name, slug)
+          VALUES ($1, $2, $3)
+          RETURNING *
+          `,
+          [orgId, orgName, orgSlug],
+        );
+        org = orgInsert.rows[0];
+      }
+
+      let user = null;
+      const userLookup = await client.query(
+        `SELECT * FROM users WHERE email = $1 LIMIT 1`,
+        [email],
+      );
+
+      if (userLookup.rows.length > 0) {
+        user = userLookup.rows[0];
+      } else {
+        const userId = crypto.randomUUID();
+        const userInsert = await client.query(
+          `
+          INSERT INTO users (user_id, email, full_name)
+          VALUES ($1, $2, $3)
+          RETURNING *
+          `,
+          [userId, email, fullName],
+        );
+        user = userInsert.rows[0];
+      }
+
+      const membershipLookup = await client.query(
+        `
+        SELECT * FROM organization_members
+        WHERE org_id = $1 AND user_id = $2
+        LIMIT 1
+        `,
+        [org.org_id, user.user_id],
+      );
+
+      if (membershipLookup.rows.length === 0) {
+        await client.query(
+          `
+          INSERT INTO organization_members (org_id, user_id, role)
+          VALUES ($1, $2, $3)
+          `,
+          [org.org_id, user.user_id, "owner"],
+        );
+      }
+
+      await client.query("COMMIT");
+
+      return res.json({
+        ok: true,
+        user: {
+          user_id: user.user_id,
+          email: user.email,
+          full_name: user.full_name || "",
+        },
+        organization: {
+          org_id: org.org_id,
+          name: org.name,
+          slug: org.slug || "",
+        },
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error("ORG LOGIN ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
 // Projects list from disk
 app.get("/api/projects", async (_req, res) => {
   try {
@@ -139,6 +266,7 @@ app.post("/api/projects", async (req, res) => {
 
     const projectConfig = {
       project_id: projectId,
+      org_id: orgId,
       project_name: projectName,
       env_count: envCount,
       description,
@@ -255,7 +383,13 @@ app.post("/api/generate", async (req, res) => {
     }
 
     // 🔥 IMPORTANT: backend owns identity (replace later with auth)
-    const createdBy = "system"; // TEMP (later req.user.id)
+
+    const createdBy = String(payload.created_by || "").trim();
+    if (!createdBy) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "created_by is required" });
+    }
 
     const endpoints = Array.isArray(payload.endpoints) ? payload.endpoints : [];
 
@@ -330,6 +464,74 @@ app.get("/api/jobs/:jobId", (req, res) => {
       ok: false,
       message: e?.message || String(e),
     });
+  }
+});
+
+app.get("/api/jobs/:jobId/events", (req, res) => {
+  try {
+    const jobId = String(req.params.jobId || "").trim();
+    if (!jobId) {
+      return res.status(400).json({ ok: false, message: "jobId is required" });
+    }
+
+    const job = getJob(jobId);
+    if (!job) {
+      return res.status(404).json({ ok: false, message: "Job not found" });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
+    }
+
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    send("snapshot", {
+      ok: true,
+      job: {
+        job_id: job.job_id,
+        status: job.status,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        started_at: job.started_at,
+        completed_at: job.completed_at,
+        error: job.error,
+        meta: job.meta,
+        result: job.result,
+        progress: job.progress || null,
+        has_result: !!job.result,
+      },
+    });
+
+    const unsubscribe = subscribeJob(jobId, (payload) => {
+      send("progress", payload);
+    });
+
+    const heartbeat = setInterval(() => {
+      res.write(`: ping\n\n`);
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      res.end();
+    });
+  } catch (e) {
+    console.error("JOB EVENTS ERROR:", e);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        ok: false,
+        message: e?.message || String(e),
+      });
+    }
+    res.end();
   }
 });
 

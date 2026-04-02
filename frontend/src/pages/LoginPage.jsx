@@ -69,7 +69,7 @@ export default function LoginPage() {
     };
   }, [isIndividual]);
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
 
     if (!form.email.trim()) {
@@ -82,12 +82,47 @@ export default function LoginPage() {
       return;
     }
 
-    navigate("/workspace", {
-      state: {
-        mode,
-        email: form.email,
-      },
-    });
+    if (isIndividual) {
+      navigate("/workspace", {
+        state: {
+          mode,
+          email: form.email,
+        },
+      });
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/org-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || "Organization login failed");
+      }
+
+      navigate("/workspace", {
+        state: {
+          mode,
+          email: data.user?.email || form.email.trim(),
+          user_id: data.user?.user_id || "",
+          org_id: data.organization?.org_id || "",
+          org_name: data.organization?.name || "",
+        },
+      });
+    } catch (err) {
+      alert(err.message || "Login failed");
+    }
   }
 
   function handleGoogleClick() {

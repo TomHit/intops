@@ -8,6 +8,7 @@ export default function DashboardPage({
   onChangeGeneratorSettings,
   userMode = "individual",
   userEmail = "",
+  orgId = "",
 }) {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
@@ -72,6 +73,7 @@ export default function DashboardPage({
     try {
       const payload = {
         project_name: projectName,
+        org_id: orgId,
         env_count: Number(newProject.env_count) || 1,
         description: newProject.description.trim(),
         spec_source_type: newProject.spec_source_type || "url",

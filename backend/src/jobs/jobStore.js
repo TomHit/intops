@@ -1,7 +1,13 @@
+import { emitJobEvent } from "./jobEvents.js";
+
 const jobs = new Map();
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function cloneJob(job) {
+  return job ? { ...job } : null;
 }
 
 export function createJob(meta = {}) {
@@ -21,15 +27,22 @@ export function createJob(meta = {}) {
     error: null,
     meta,
     result: null,
+    progress: null,
   };
 
   jobs.set(jobId, job);
-  return { ...job };
+
+  const snapshot = cloneJob(job);
+  emitJobEvent(jobId, {
+    type: "job_created",
+    job: snapshot,
+  });
+
+  return snapshot;
 }
 
 export function getJob(jobId) {
-  const job = jobs.get(jobId);
-  return job ? { ...job } : null;
+  return cloneJob(jobs.get(jobId));
 }
 
 export function updateJob(jobId, patch = {}) {
@@ -43,7 +56,14 @@ export function updateJob(jobId, patch = {}) {
   };
 
   jobs.set(jobId, updated);
-  return { ...updated };
+
+  const snapshot = cloneJob(updated);
+  emitJobEvent(jobId, {
+    type: "job_updated",
+    job: snapshot,
+  });
+
+  return snapshot;
 }
 
 export function listJobs() {

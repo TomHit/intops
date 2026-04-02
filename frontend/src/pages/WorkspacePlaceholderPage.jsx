@@ -22,8 +22,19 @@ export default function WorkspacePlaceholderPage() {
   const saved =
     JSON.parse(localStorage.getItem("apitestops_session") || "null") || {};
 
+  const userId = location.state?.user_id || saved.user_id || "";
   const mode = location.state?.mode || saved.mode;
   const email = location.state?.email || saved.email || "";
+  const orgId = location.state?.org_id || saved.org_id || "";
+  localStorage.setItem(
+    "apitestops_session",
+    JSON.stringify({
+      mode,
+      email,
+      org_id: orgId,
+      user_id: userId,
+    }),
+  );
 
   const [activeNav, setActiveNav] = useState("onboarding");
   const [selectedProjectId, setSelectedProjectId] = useState(null);
@@ -69,6 +80,7 @@ export default function WorkspacePlaceholderPage() {
           <DashboardPage
             userMode={mode}
             userEmail={email}
+            orgId={orgId}
             generatorSettings={generatorSettings}
             onChangeGeneratorSettings={setGeneratorSettings}
             onOpenProject={handleOpenProject}
@@ -85,6 +97,7 @@ export default function WorkspacePlaceholderPage() {
             onSaveGeneratedRun={setGeneratedRun}
             onViewTestCases={() => setActiveNav("testCases")}
             onBack={() => setActiveNav("projects")}
+            userId={userId}
           />
         );
 
@@ -97,6 +110,7 @@ export default function WorkspacePlaceholderPage() {
             generatedRun={generatedRun}
             onSaveGeneratedRun={setGeneratedRun}
             onBack={() => setActiveNav("generate")}
+            userId={userId}
           />
         );
 
@@ -117,6 +131,7 @@ export default function WorkspacePlaceholderPage() {
           <DashboardPage
             userMode={mode}
             userEmail={email}
+            orgId={orgId}
             generatorSettings={generatorSettings}
             onChangeGeneratorSettings={setGeneratorSettings}
             onOpenProject={handleOpenProject}

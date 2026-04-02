@@ -22,6 +22,8 @@ const DEFAULT_OPTIONS = {
   guidance: "",
 };
 
+const DEFAULT_CASES_PAGE_SIZE = 100;
+
 function safeJsonParse(text) {
   try {
     return text ? JSON.parse(text) : null;
@@ -166,6 +168,7 @@ function getEndpointDisplay(apiDetails = {}) {
     summary: `${method} ${path}`.trim(),
   };
 }
+
 export default function GeneratorPage({
   projectId,
   selectedProjectId,
@@ -176,6 +179,7 @@ export default function GeneratorPage({
   options,
   generatorSettings,
   activeSection = "generate",
+  userId = "",
 }) {
   const resolvedProjectId = projectId || selectedProjectId || "";
   const resolvedOptions = {
@@ -211,11 +215,24 @@ export default function GeneratorPage({
   const [runningStepIndex, setRunningStepIndex] = useState(0);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [jobProgress, setJobProgress] = useState(null);
+  const [activeJobId, setActiveJobId] = useState("");
+
+  // paginated test-cases state
+  const [casesPage, setCasesPage] = useState(1);
+  const [casesPageSize, setCasesPageSize] = useState(DEFAULT_CASES_PAGE_SIZE);
+  const [casesTotal, setCasesTotal] = useState(0);
+  const [casesLoading, setCasesLoading] = useState(false);
 
   const tableRows = useMemo(
     () => deriveTableRows(run.testplan),
     [run.testplan],
   );
+
+  const totalCasePages = useMemo(() => {
+    if (!casesTotal) return 1;
+    return Math.max(1, Math.ceil(casesTotal / casesPageSize));
+  }, [casesTotal, casesPageSize]);
 
   const selectedCase = useMemo(() => {
     if (!tableRows.length) return null;
@@ -229,8 +246,11 @@ export default function GeneratorPage({
       : null;
 
   useEffect(() => {
-    if (generatedRun?.testplan) {
-      setRun(generatedRun);
+    if (generatedRun?.testplan || generatedRun?.run_id) {
+      setRun((prev) => ({
+        ...prev,
+        ...generatedRun,
+      }));
     }
   }, [generatedRun]);
 
@@ -259,6 +279,14 @@ export default function GeneratorPage({
 
     return () => window.clearInterval(id);
   }, [run.status]);
+
+  useEffect(() => {
+    if (activeSection === "testCases") {
+      setCasesPage(1);
+      setSelectedCaseId("");
+      setIsPreviewOpen(false);
+    }
+  }, [activeSection, run?.run_id]);
 
   async function loadEndpoints(specSource = "") {
     if (!resolvedProjectId) {
@@ -303,15 +331,47 @@ export default function GeneratorPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedProjectId, resolvedOptions?.spec_source]);
 
+  async function fetchRunCasesPage(runId, page = 1, pageSize = 100) {
+    const res = await fetch(
+      `/api/runs/${encodeURIComponent(runId)}/cases?page=${page}&page_size=${pageSize}`,
+      {
+        headers: { Accept: "application/json" },
+      },
+    );
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+
+    if (!res.ok) {
+      throw new Error(
+        data?.message || `Failed to load run cases (${res.status})`,
+      );
+    }
+
+    return {
+      cases: Array.isArray(data?.cases) ? data.cases : [],
+      total_cases: Number(data?.total_cases || 0),
+      page: Number(data?.page || page),
+      page_size: Number(data?.page_size || pageSize),
+    };
+  }
+
   useEffect(() => {
-    async function loadPersistedCases() {
+    async function loadPagedCases() {
       if (activeSection !== "testCases") return;
       if (!run?.run_id) return;
 
+      setCasesLoading(true);
+
       try {
-        const data = await fetchRunCases(run.run_id);
-        const cases = Array.isArray(data?.cases) ? data.cases : [];
-        const totalCases = Number(data?.total_cases || cases.length);
+        const data = await fetchRunCasesPage(
+          run.run_id,
+          casesPage,
+          casesPageSize,
+        );
+
+        const cases = data.cases || [];
+        setCasesTotal(data.total_cases || 0);
 
         const uniqueEndpointCount = new Set(
           cases.map(
@@ -329,11 +389,11 @@ export default function GeneratorPage({
           generation: {
             generated_at: new Date().toISOString(),
             model: "deterministic",
-            source: "persisted_run_files",
+            source: "paged_run_cases",
           },
           suites: [
             {
-              suite_id: "streamed_cases",
+              suite_id: "paged_cases",
               name: "Generated Test Cases",
               endpoints: [],
               cases,
@@ -345,7 +405,7 @@ export default function GeneratorPage({
           ...run,
           testplan: reconstructedTestplan,
           report: {
-            total_cases: totalCases,
+            total_cases: data.total_cases || 0,
             needs_review: cases.filter((c) => !!c.needs_review).length,
             endpoint_count: uniqueEndpointCount,
           },
@@ -357,79 +417,76 @@ export default function GeneratorPage({
           onSaveGeneratedRun(nextRun);
         }
       } catch (e) {
-        console.error("LOAD PERSISTED CASES ERROR:", e);
+        console.error("LOAD PAGED CASES ERROR:", e);
         setRun((prev) => ({
           ...prev,
           error: {
             message: e.message || "Failed to load generated test cases.",
           },
         }));
+      } finally {
+        setCasesLoading(false);
       }
     }
 
-    loadPersistedCases();
+    loadPagedCases();
   }, [
     activeSection,
     run?.run_id,
+    casesPage,
+    casesPageSize,
     resolvedProjectId,
     resolvedOptions.env,
     onSaveGeneratedRun,
   ]);
-  async function fetchRunCases(runId) {
-    const PAGE_SIZE = 500;
-    let page = 1;
-    let allCases = [];
-    let totalCases = 0;
 
-    while (true) {
-      const res = await fetch(
-        `/api/runs/${encodeURIComponent(runId)}/cases?page=${page}&page_size=${PAGE_SIZE}`,
-        {
-          headers: { Accept: "application/json" },
-        },
-      );
+  function streamJob(jobId, { onProgress, onDone, onError }) {
+    const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
 
-      const text = await res.text();
-      const data = safeJsonParse(text);
+    es.addEventListener("snapshot", (evt) => {
+      const payload = safeJsonParse(evt.data);
+      const job = payload?.job || null;
+      if (!job) return;
 
-      if (!res.ok) {
-        throw new Error(
-          data?.message || `Failed to load run cases (${res.status})`,
+      onProgress?.(job);
+
+      if (job.status === "completed") {
+        es.close();
+        onDone?.(job);
+      } else if (job.status === "failed") {
+        es.close();
+        onError?.(
+          new Error(job?.error?.message || "Generation job failed."),
+          job,
         );
       }
-
-      const batch = Array.isArray(data?.cases) ? data.cases : [];
-      totalCases = Number(data?.total_cases || 0);
-
-      allCases = allCases.concat(batch);
-
-      if (!batch.length || allCases.length >= totalCases) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    return {
-      cases: allCases,
-      total_cases: totalCases || allCases.length,
-    };
-  }
-  async function fetchJobStatus(jobId) {
-    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
-      headers: { Accept: "application/json" },
     });
 
-    const text = await res.text();
-    const data = safeJsonParse(text);
+    es.addEventListener("progress", (evt) => {
+      const payload = safeJsonParse(evt.data);
+      const job = payload?.job || null;
+      if (!job) return;
 
-    if (!res.ok) {
-      throw new Error(
-        data?.message || `Failed to fetch job status (${res.status})`,
-      );
-    }
+      onProgress?.(job);
 
-    return data?.job || null;
+      if (job.status === "completed") {
+        es.close();
+        onDone?.(job);
+      } else if (job.status === "failed") {
+        es.close();
+        onError?.(
+          new Error(job?.error?.message || "Generation job failed."),
+          job,
+        );
+      }
+    });
+
+    es.onerror = () => {
+      es.close();
+      onError?.(new Error("Live progress connection lost."));
+    };
+
+    return () => es.close();
   }
 
   async function fetchJobResult(jobId) {
@@ -451,41 +508,6 @@ export default function GeneratorPage({
     return data?.result || null;
   }
 
-  async function waitForJobCompletion(
-    jobId,
-    { intervalMs = 1500, timeoutMs = 300000 } = {},
-  ) {
-    const startedAt = Date.now();
-
-    while (true) {
-      const job = await fetchJobStatus(jobId);
-
-      if (!job) {
-        throw new Error("Job status payload is missing.");
-      }
-
-      if (job.status === "completed") {
-        return await fetchJobResult(jobId);
-      }
-
-      if (job.status === "failed") {
-        const err = new Error(job?.error?.message || "Generation job failed.");
-        err.details = job?.error || null;
-        throw err;
-      }
-
-      if (Date.now() - startedAt > timeoutMs) {
-        const err = new Error(
-          "Generation timed out while waiting for job completion.",
-        );
-        err.details = { job_id: jobId, status: job.status };
-        throw err;
-      }
-
-      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
-    }
-  }
-
   async function generate() {
     const selected = selection.selected_endpoint_ids;
 
@@ -496,6 +518,11 @@ export default function GeneratorPage({
 
     if (!selected.length) {
       alert("Select at least 1 endpoint.");
+      return;
+    }
+
+    if (!userId) {
+      alert("User session is missing. Please log in again.");
       return;
     }
 
@@ -521,7 +548,7 @@ export default function GeneratorPage({
 
     const payload = {
       project_id: resolvedProjectId,
-      created_by: "b927ff5d-5d28-4caa-b046-9778608c397e",
+      created_by: userId,
       env: resolvedOptions.env,
       auth_profile: resolvedOptions.auth_profile,
       include: resolvedOptions.include,
@@ -561,53 +588,91 @@ export default function GeneratorPage({
         throw err;
       }
 
-      const result = await waitForJobCompletion(jobId);
+      setActiveJobId(jobId);
 
-      const nextRun = {
-        run_id: result?.run_id || jobId,
-        status: "done",
-        error: null,
-        generation_mode:
-          result?.generation_mode ||
-          result?.details?.generation_mode ||
-          "balanced",
-        spec_quality:
-          result?.spec_quality || result?.details?.spec_quality || null,
-        blocked_endpoints: Array.isArray(result?.blocked_endpoints)
-          ? result.blocked_endpoints
-          : Array.isArray(result?.details?.blocked_endpoints)
-            ? result.details.blocked_endpoints
-            : [],
-        partial_endpoints: Array.isArray(result?.partial_endpoints)
-          ? result.partial_endpoints
-          : Array.isArray(result?.details?.partial_endpoints)
-            ? result.details.partial_endpoints
-            : [],
-        eligible_endpoints: Array.isArray(result?.eligible_endpoints)
-          ? result.eligible_endpoints
-          : Array.isArray(result?.details?.eligible_endpoints)
-            ? result.details.eligible_endpoints
-            : [],
-        batching: result?.batching || null,
-        result_storage: result?.result_storage || null,
+      await new Promise((resolve, reject) => {
+        const closeStream = streamJob(jobId, {
+          onProgress: (job) => {
+            setJobProgress(job?.progress || null);
 
-        // keep UI alive even though full testplan is no longer returned
-        testplan: result?.testplan || null,
-        report:
-          result?.report ||
-          (result?.run_id
-            ? {
-                total_cases: "Saved to files",
-                needs_review: "-",
+            setRun((r) => ({
+              ...r,
+              status: job?.status === "completed" ? "done" : "running",
+              error: job?.error || null,
+            }));
+          },
+
+          onDone: async () => {
+            try {
+              closeStream?.();
+
+              const result = await fetchJobResult(jobId);
+
+              const nextRun = {
+                run_id: result?.run_id || jobId,
+                status: "done",
+                error: null,
+                generation_mode:
+                  result?.generation_mode ||
+                  result?.details?.generation_mode ||
+                  "balanced",
+                spec_quality:
+                  result?.spec_quality || result?.details?.spec_quality || null,
+                blocked_endpoints: Array.isArray(result?.blocked_endpoints)
+                  ? result.blocked_endpoints
+                  : Array.isArray(result?.details?.blocked_endpoints)
+                    ? result.details.blocked_endpoints
+                    : [],
+                partial_endpoints: Array.isArray(result?.partial_endpoints)
+                  ? result.partial_endpoints
+                  : Array.isArray(result?.details?.partial_endpoints)
+                    ? result.details.partial_endpoints
+                    : [],
+                eligible_endpoints: Array.isArray(result?.eligible_endpoints)
+                  ? result.eligible_endpoints
+                  : Array.isArray(result?.details?.eligible_endpoints)
+                    ? result.details.eligible_endpoints
+                    : [],
+                batching: result?.batching || null,
+                result_storage: result?.result_storage || null,
+                testplan: result?.testplan || null,
+                report:
+                  result?.report ||
+                  (result?.run_id
+                    ? {
+                        total_cases: "Saved to files",
+                        needs_review: "-",
+                      }
+                    : null),
+              };
+
+              setRun(nextRun);
+              setJobProgress(null);
+              setCasesPage(1);
+              setSelectedCaseId("");
+              setIsPreviewOpen(false);
+
+              if (onSaveGeneratedRun) {
+                onSaveGeneratedRun(nextRun);
               }
-            : null),
-      };
 
-      setRun(nextRun);
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          },
 
-      if (onSaveGeneratedRun) {
-        onSaveGeneratedRun(nextRun);
-      }
+          onError: (err, job) => {
+            closeStream?.();
+
+            reject(
+              Object.assign(err, {
+                details: job?.error || null,
+              }),
+            );
+          },
+        });
+      });
     } catch (e) {
       setRun((r) => ({
         ...r,
@@ -637,7 +702,7 @@ export default function GeneratorPage({
   function exportJson() {
     if (!run.testplan) return;
     downloadText(
-      "test_cases.json",
+      `test_cases_page_${casesPage}.json`,
       JSON.stringify(run.testplan, null, 2),
       "application/json",
     );
@@ -646,7 +711,7 @@ export default function GeneratorPage({
   function exportCsv() {
     if (!tableRows.length) return;
     const csv = buildCsvFromTable(tableRows);
-    downloadText("test_cases.csv", csv, "text/csv");
+    downloadText(`test_cases_page_${casesPage}.csv`, csv, "text/csv");
   }
 
   const isTestCasesSection = activeSection === "testCases";
@@ -779,7 +844,7 @@ export default function GeneratorPage({
               <button
                 type="button"
                 onClick={exportJson}
-                disabled={!run.testplan}
+                disabled={!run.testplan || casesLoading}
                 style={styles.secondaryBtn}
               >
                 Export JSON
@@ -788,7 +853,7 @@ export default function GeneratorPage({
               <button
                 type="button"
                 onClick={exportCsv}
-                disabled={!tableRows.length}
+                disabled={!tableRows.length || casesLoading}
                 style={styles.secondaryBtn}
               >
                 Export CSV
@@ -802,6 +867,13 @@ export default function GeneratorPage({
                 <div style={styles.emptyStateTitle}>No project selected</div>
                 <div style={styles.emptyStateText}>
                   Open a project from the Projects tab first.
+                </div>
+              </div>
+            ) : casesLoading ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>Loading test cases...</div>
+                <div style={styles.emptyStateText}>
+                  Fetching page {casesPage} of generated cases.
                 </div>
               </div>
             ) : !run.testplan || !tableRows.length ? (
@@ -818,9 +890,54 @@ export default function GeneratorPage({
                 <div style={{ marginBottom: 18 }}>
                   <ResultsSummary
                     rows={tableRows}
-                    report={run.report}
+                    report={{
+                      ...run.report,
+                      total_cases: casesTotal || run.report?.total_cases || 0,
+                    }}
                     testplan={run.testplan}
                   />
+                </div>
+
+                <div style={styles.paginationBar}>
+                  <div style={styles.paginationMeta}>
+                    Page {casesPage} of {totalCasePages} • Total cases:{" "}
+                    {casesTotal}
+                  </div>
+
+                  <div style={styles.paginationControls}>
+                    <select
+                      value={casesPageSize}
+                      onChange={(e) => {
+                        setCasesPageSize(Number(e.target.value) || 100);
+                        setCasesPage(1);
+                      }}
+                      style={styles.pageSizeSelect}
+                    >
+                      <option value={50}>50 / page</option>
+                      <option value={100}>100 / page</option>
+                      <option value={200}>200 / page</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => setCasesPage((p) => Math.max(1, p - 1))}
+                      disabled={casesPage <= 1 || casesLoading}
+                      style={styles.secondaryBtn}
+                    >
+                      Previous
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCasesPage((p) => Math.min(totalCasePages, p + 1))
+                      }
+                      disabled={casesPage >= totalCasePages || casesLoading}
+                      style={styles.secondaryBtn}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -835,10 +952,8 @@ export default function GeneratorPage({
                         Generated Test Cases
                       </div>
                       <div style={styles.tablePaneMeta}>
-                        {run.report?.total_cases || tableRows.length} row
-                        {(run.report?.total_cases || tableRows.length) === 1
-                          ? ""
-                          : "s"}
+                        Showing {tableRows.length} row
+                        {tableRows.length === 1 ? "" : "s"} on this page
                       </div>
                     </div>
 
@@ -902,7 +1017,7 @@ export default function GeneratorPage({
                                   >
                                     View
                                   </button>
-                                </td>{" "}
+                                </td>
                               </tr>
                             );
                           })}
@@ -1247,36 +1362,70 @@ export default function GeneratorPage({
 
                 <button
                   type="button"
-                  onClick={exportJson}
-                  disabled={!run.testplan}
+                  onClick={() => onViewTestCases?.()}
+                  disabled={!run.run_id || run.status === "running"}
                   style={styles.secondaryBtn}
                 >
-                  Export JSON
-                </button>
-
-                <button
-                  type="button"
-                  onClick={exportCsv}
-                  disabled={!tableRows.length}
-                  style={styles.secondaryBtn}
-                >
-                  CSV
+                  View Test Cases
                 </button>
               </div>
             </div>
 
-            <div style={styles.resultsInner}>
-              {run.status === "done" && !run.testplan && (
-                <div style={styles.infoBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 8 }}>
-                    Generation completed
-                  </div>
-                  <div style={{ marginBottom: 8 }}>Run ID: {run.run_id}</div>
-                  <div style={{ marginBottom: 12 }}>
-                    Cases were saved to batch files. Open the Test Cases tab to
-                    continue.
-                  </div>
+            {run.status === "running" ? (
+              <div style={styles.runningCard}>
+                <div style={styles.runningTitle}>Generation in progress</div>
+                <div style={styles.runningText}>
+                  {runningStepLabel || "Working on your test cases..."}
+                </div>
 
+                <div style={styles.runningDots}>
+                  <span className="gen-dot" />
+                  <span className="gen-dot" />
+                  <span className="gen-dot" />
+                  <span className="gen-dot" />
+                  <span className="gen-dot" />
+                </div>
+
+                {jobProgress ? (
+                  <div style={styles.progressInfoBox}>
+                    <div style={styles.progressRow}>
+                      <strong>Status:</strong>{" "}
+                      {jobProgress.message || "Generation running"}
+                    </div>
+                    <div style={styles.progressRow}>
+                      <strong>Endpoints:</strong>{" "}
+                      {jobProgress.progress_current || 0} /{" "}
+                      {jobProgress.progress_total || 0}
+                    </div>
+                    <div style={styles.progressRow}>
+                      <strong>Batches:</strong>{" "}
+                      {jobProgress.processed_batches || 0} /{" "}
+                      {jobProgress.total_batches || 0}
+                    </div>
+                    <div style={styles.progressRow}>
+                      <strong>Inserted cases:</strong>{" "}
+                      {jobProgress.inserted_cases || 0}
+                    </div>
+                    <div style={styles.progressRow}>
+                      <strong>Needs review:</strong>{" "}
+                      {jobProgress.needs_review || 0}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : run.status === "error" ? (
+              <div style={{ ...styles.infoBox, ...styles.errorInfo }}>
+                Error: {run.error?.message || "Generation failed."}
+              </div>
+            ) : run.status === "done" ? (
+              <div style={styles.successCard}>
+                <div style={styles.successTitle}>Generation complete</div>
+                <div style={styles.successText}>
+                  Your run has finished. Open the Test Cases tab for paginated
+                  review.
+                </div>
+
+                <div className="success-actions" style={styles.successActions}>
                   <button
                     type="button"
                     onClick={() => onViewTestCases?.()}
@@ -1285,182 +1434,12 @@ export default function GeneratorPage({
                     Open Test Cases
                   </button>
                 </div>
-              )}
-              {run.status === "running" && (
-                <div style={styles.resultsProgress}>
-                  <div style={styles.resultsProgressTop}>
-                    <span>
-                      {runningStepLabel || "Building test cases now..."}
-                    </span>
-                    <div style={styles.dotGroup}>
-                      <span className="gen-dot" />
-                      <span className="gen-dot" />
-                      <span className="gen-dot" />
-                      <span className="gen-dot" />
-                      <span className="gen-dot" />
-                    </div>
-                  </div>
-                  <div style={styles.resultsProgressBarTrack}>
-                    <div style={styles.resultsProgressBarFill} />
-                  </div>
-                </div>
-              )}
-
-              {run.status === "error" && (
-                <div
-                  style={{
-                    ...styles.infoBox,
-                    ...styles.errorInfo,
-                    marginBottom: 16,
-                  }}
-                >
-                  {run.error?.message ||
-                    "Something went wrong during generation."}
-                </div>
-              )}
-
-              {run.status === "error" &&
-                (run.spec_quality ||
-                  run.blocked_endpoints.length ||
-                  run.partial_endpoints.length) && (
-                  <div style={styles.diagnosticsBox}>
-                    <div style={styles.diagnosticsTitle}>
-                      Spec improvement suggestions
-                    </div>
-
-                    {run.spec_quality?.summary && (
-                      <div
-                        className="strict-summary-grid"
-                        style={styles.summaryMiniGrid}
-                      >
-                        <div style={styles.summaryMiniCard}>
-                          <div style={styles.summaryMiniLabel}>Spec health</div>
-                          <div style={styles.summaryMiniValue}>
-                            {run.spec_quality.spec_health_score ?? "-"}
-                          </div>
-                        </div>
-
-                        <div style={styles.summaryMiniCard}>
-                          <div style={styles.summaryMiniLabel}>Warnings</div>
-                          <div style={styles.summaryMiniValue}>
-                            {run.spec_quality.summary.warnings ?? 0}
-                          </div>
-                        </div>
-
-                        <div style={styles.summaryMiniCard}>
-                          <div style={styles.summaryMiniLabel}>Partial</div>
-                          <div style={styles.summaryMiniValue}>
-                            {run.spec_quality.summary.partial ?? 0}
-                          </div>
-                        </div>
-
-                        <div style={styles.summaryMiniCard}>
-                          <div style={styles.summaryMiniLabel}>Blocked</div>
-                          <div style={styles.summaryMiniValue}>
-                            {run.spec_quality.summary.blocked ?? 0}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {run.blocked_endpoints.length > 0 && (
-                      <div style={styles.diagnosticsSection}>
-                        <div style={styles.diagnosticsLabel}>
-                          Affected Endpoints
-                        </div>
-
-                        <div style={styles.issueList}>
-                          {run.blocked_endpoints.map((item, idx) => (
-                            <div key={idx} style={styles.issueCard}>
-                              <div style={styles.issueTitle}>
-                                {(item.method || "").toUpperCase()}{" "}
-                                {item.path || ""}
-                              </div>
-
-                              <div style={styles.issueMeta}>
-                                Status: {item.status || "-"} • Issues:{" "}
-                                {item.issues_count ?? 0}
-                              </div>
-
-                              {Array.isArray(item.issues) &&
-                                item.issues.map((issue, issueIdx) => (
-                                  <div
-                                    key={issueIdx}
-                                    style={styles.issueSubBlock}
-                                  >
-                                    <div style={styles.issueText}>
-                                      {issue.message}
-                                    </div>
-
-                                    {issue.suggested_fix?.content && (
-                                      <div style={styles.fixBox}>
-                                        <div style={styles.fixTitle}>
-                                          Suggested patch (
-                                          {issue.suggested_fix.format || "text"}
-                                          )
-                                        </div>
-                                        <pre style={styles.fixCode}>
-                                          {issue.suggested_fix.content}
-                                        </pre>
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-              {run.status === "done" && run.testplan && (
-                <>
-                  <div style={{ marginBottom: 18 }}>
-                    <ResultsSummary
-                      rows={tableRows}
-                      report={run.report}
-                      testplan={run.testplan}
-                    />
-                  </div>
-
-                  <div style={styles.successBox}>
-                    <div style={styles.successTitle}>
-                      Test generation completed
-                    </div>
-                    <div style={styles.successText}>
-                      {tableRows.length} test case
-                      {tableRows.length === 1 ? "" : "s"} generated
-                      successfully. Open the dedicated Test Cases tab for
-                      readable review and case details.
-                    </div>
-
-                    <div
-                      className="success-actions"
-                      style={styles.successActions}
-                    >
-                      <button
-                        type="button"
-                        onClick={onViewTestCases}
-                        style={styles.primaryBtnCompact}
-                      >
-                        View Test Cases
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {run.status === "idle" && (
-                <div style={styles.emptyState}>
-                  <div style={styles.emptyStateTitle}>No generation yet</div>
-                  <div style={styles.emptyStateText}>
-                    Select one or more endpoints from the explorer and click
-                    Generate Tests.
-                  </div>
-                </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div style={styles.infoBox}>
+                Select endpoints and click Generate Tests to start.
+              </div>
+            )}
           </section>
         </section>
       )}
@@ -1471,766 +1450,540 @@ export default function GeneratorPage({
 const styles = {
   page: {
     display: "grid",
-    gap: 2,
-    padding: "0",
-    width: "100%",
-    minWidth: 0,
-    margin: 0,
-    background: "#f8fafc",
+    gap: 16,
   },
-  endpointWarning: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#b42318",
-    background: "#fff5f5",
-    border: "1px solid #fecaca",
-    padding: "8px 10px",
-    borderRadius: 8,
-    lineHeight: 1.4,
-  },
-
   notice: {
-    padding: 12,
-    borderRadius: 12,
+    padding: "14px 16px",
+    borderRadius: 14,
     background: "#fff7ed",
     border: "1px solid #fed7aa",
     color: "#9a3412",
+    fontSize: 14,
   },
-
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "420px minmax(0, 1fr)",
-    gap: 10,
+    gridTemplateColumns: "320px minmax(0, 1fr)",
+    gap: 20,
     alignItems: "start",
-    width: "100%",
-    minWidth: 0,
   },
-
-  testCasesWrap: {
-    minWidth: 0,
-    width: "100%",
-    border: "1px solid #e5e7eb",
-    borderRadius: 18,
-    background: "#fff",
-    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
-    overflow: "hidden",
-  },
-
-  tableOnlyWrap: {
-    position: "relative",
-    transition: "all 0.2s ease",
-  },
-
-  tableOnlyWrapBlurred: {
-    filter: "blur(3px)",
-    opacity: 0.55,
-    pointerEvents: "none",
-    userSelect: "none",
-  },
-
-  tablePane: {
-    minWidth: 0,
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    overflow: "hidden",
-    background: "#fff",
-  },
-
-  tablePaneHead: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    padding: "14px 16px",
-    borderBottom: "1px solid #eef2f7",
-    background: "#fcfdff",
-    flexWrap: "wrap",
-  },
-
-  tablePaneTitle: {
-    fontSize: 16,
-    fontWeight: 800,
-    color: "#111827",
-  },
-
-  tablePaneMeta: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#64748b",
-  },
-
-  tableWrap: {
-    width: "100%",
-    overflowX: "auto",
-  },
-
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    tableLayout: "fixed",
-  },
-
-  th: {
-    textAlign: "left",
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#475569",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-    padding: "12px 14px",
-    borderBottom: "1px solid #e5e7eb",
-    background: "#f8fafc",
-    whiteSpace: "nowrap",
-  },
-
-  td: {
-    fontSize: 14,
-    color: "#334155",
-    padding: "12px 14px",
-    borderBottom: "1px solid #eef2f7",
-    verticalAlign: "top",
-  },
-
-  tdMono: {
-    fontSize: 12,
-    color: "#334155",
-    padding: "12px 14px",
-    borderBottom: "1px solid #eef2f7",
-    verticalAlign: "top",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    lineHeight: 1.5,
-  },
-
-  tdTitle: {
-    fontSize: 14,
-    color: "#0f172a",
-    padding: "12px 14px",
-    borderBottom: "1px solid #eef2f7",
-    verticalAlign: "top",
-    fontWeight: 700,
-    maxWidth: 420,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    lineHeight: 1.5,
-  },
-
-  previewMiniValueMono: {
-    fontSize: 13,
-    color: "#0f172a",
-    fontWeight: 700,
-    lineHeight: 1.6,
-    wordBreak: "break-all",
-    overflowWrap: "anywhere",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-
-  previewCodeBlockLight: {
-    margin: 0,
-    padding: 12,
-    borderRadius: 12,
-    background: "#f8fafc",
-    color: "#0f172a",
-    fontSize: 12,
-    lineHeight: 1.6,
-    overflowX: "auto",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    border: "1px solid #e5e7eb",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-
-  tdApi: {
-    fontSize: 13,
-    color: "#334155",
-    padding: "12px 14px",
-    borderBottom: "1px solid #eef2f7",
-    verticalAlign: "top",
-    lineHeight: 1.5,
-    wordBreak: "break-word",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-
-  trActive: {
-    background: "#f8fbff",
-  },
-
-  viewBtn: {
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #dbe3f0",
-    background: "#fff",
-    color: "#0f172a",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-
-  viewBtnActive: {
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #c7d2fe",
-    background: "#eef2ff",
-    color: "#3730a3",
-    fontWeight: 800,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-
-  previewOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(15, 23, 42, 0.20)",
-    zIndex: 40,
-    animation: "overlayFadeIn 0.18s ease-out",
-  },
-
-  previewDrawer: {
-    position: "fixed",
-    top: 0,
-    right: 0,
-    width: "min(560px, 92vw)",
-    height: "100vh",
-    background: "#ffffff",
-    borderLeft: "1px solid #e5e7eb",
-    boxShadow: "-20px 0 50px rgba(15, 23, 42, 0.16)",
-    zIndex: 50,
-    display: "grid",
-    gridTemplateRows: "auto minmax(0, 1fr)",
-    animation: "previewSlideIn 0.24s ease-out",
-    willChange: "transform, opacity",
-  },
-
-  previewHead: {
-    padding: "14px 16px",
-    borderBottom: "1px solid #eef2f7",
-    background: "#fcfdff",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-
-  previewTitle: {
-    fontSize: 16,
-    fontWeight: 800,
-    color: "#111827",
-    marginBottom: 4,
-  },
-
-  previewSubtle: {
-    fontSize: 12,
-    color: "#64748b",
-    lineHeight: 1.4,
-  },
-
-  previewCloseBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    border: "1px solid #dbe3f0",
-    background: "#fff",
-    color: "#0f172a",
-    fontSize: 18,
-    fontWeight: 700,
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-
-  previewBody: {
-    display: "grid",
-    gap: 16,
-    padding: 16,
-    overflow: "auto",
-  },
-
-  previewSection: {
-    display: "grid",
-    gap: 8,
-  },
-
-  previewCaseTitle: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#0f172a",
-    lineHeight: 1.35,
-  },
-
-  previewMeta: {
-    fontSize: 12,
-    color: "#64748b",
-    lineHeight: 1.5,
-  },
-
-  previewLabel: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#475569",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
-
-  previewText: {
-    fontSize: 14,
-    color: "#334155",
-    lineHeight: 1.7,
-    whiteSpace: "pre-wrap",
-  },
-  previewCodeBlock: {
-    margin: 0,
-    padding: 12,
-    borderRadius: 12,
-    background: "#0f172a",
-    color: "#e5e7eb",
-    fontSize: 12,
-    lineHeight: 1.6,
-    overflowX: "auto",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    border: "1px solid #1e293b",
-  },
-
-  detailList: {
-    margin: 0,
-    paddingLeft: 18,
-    color: "#334155",
-    lineHeight: 1.7,
-    fontSize: 14,
-  },
-
-  detailMuted: {
-    fontSize: 14,
-    color: "#94a3b8",
-  },
-
-  previewGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-  },
-
-  previewMiniCard: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: 12,
-    background: "#fcfdff",
-  },
-
-  previewMiniLabel: {
-    fontSize: 11,
-    fontWeight: 800,
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-    marginBottom: 6,
-  },
-
-  previewMiniValue: {
-    fontSize: 14,
-    color: "#0f172a",
-    fontWeight: 700,
-    lineHeight: 1.5,
-    wordBreak: "break-word",
-  },
-
   leftPane: {
-    minWidth: 0,
-    width: "100%",
-    border: "1px solid #e5e7eb",
-    borderRadius: 18,
-    background: "#fff",
-    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
-    overflow: "hidden",
     position: "sticky",
-    top: 0,
+    top: 12,
     display: "grid",
     gridTemplateRows: "auto minmax(0, 1fr) auto",
-    maxHeight: "100vh",
+    gap: 0,
+    borderRadius: 20,
+    border: "1px solid #e8eef6",
+    background: "#fff",
+    overflow: "hidden",
+    boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
+    maxHeight: "calc(100vh - 160px)",
+    minHeight: 0,
+    alignSelf: "start",
   },
-
   leftPaneHeader: {
-    padding: "8px 12px 6px",
+    padding: "16px 18px",
     borderBottom: "1px solid #eef2f7",
-    background: "#ffffff",
+    background: "#f8fafc",
   },
-
   leftTitle: {
     fontSize: 18,
-    fontWeight: 800,
-    color: "#111827",
-    letterSpacing: "-0.01em",
-    lineHeight: 1.1,
-    marginBottom: 2,
+    fontWeight: 900,
+    color: "#0f172a",
   },
-
   leftSubtle: {
+    marginTop: 4,
     fontSize: 12,
-    color: "#6b7280",
-    lineHeight: 1.4,
+    color: "#64748b",
   },
-
   explorerBody: {
-    padding: 4,
-    minWidth: 0,
-    overflow: "auto",
+    padding: 16,
+    overflowY: "auto",
+    overflowX: "hidden",
+    minHeight: 0,
   },
-
   explorerFooter: {
-    padding: 8,
+    padding: 16,
     borderTop: "1px solid #eef2f7",
-    background: "#ffffff",
     display: "grid",
-    gap: 8,
+    gap: 12,
+    background: "#fff",
+    flexShrink: 0,
   },
-
   explorerFooterTop: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 12,
   },
-
   explorerFooterActions: {
     display: "flex",
-    gap: 8,
     alignItems: "center",
+    gap: 8,
     flexWrap: "wrap",
-    justifyContent: "flex-end",
   },
-
   countBadge: {
-    padding: "5px 10px",
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
     borderRadius: 999,
-    background: "#f3f4f6",
-    color: "#374151",
+    background: "#eef2ff",
+    color: "#3730a3",
     fontWeight: 700,
-    fontSize: 11,
-    whiteSpace: "nowrap",
+    fontSize: 13,
   },
-
-  summaryMiniGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 10,
-  },
-
-  summaryMiniCard: {
-    border: "1px solid #fdba74",
-    background: "#fff7ed",
-    borderRadius: 12,
-    padding: 12,
-  },
-
-  summaryMiniLabel: {
-    fontSize: 12,
-    color: "#9a3412",
-    marginBottom: 6,
-    fontWeight: 700,
-  },
-
-  summaryMiniValue: {
-    fontSize: 22,
-    fontWeight: 800,
-    color: "#7c2d12",
-    lineHeight: 1,
-  },
-
-  diagnosticsBox: {
-    marginTop: 12,
-    border: "1px solid #fed7aa",
-    background: "#fffaf5",
-    borderRadius: 16,
-    padding: 16,
+  rightPane: {
     display: "grid",
     gap: 16,
+    minWidth: 0,
   },
-
-  diagnosticsTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    color: "#9a3412",
+  resultsHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
   },
-
-  diagnosticsSection: {
-    display: "grid",
-    gap: 10,
+  panelTitle: {
+    fontSize: 22,
+    fontWeight: 900,
+    color: "#0f172a",
+    letterSpacing: "-0.02em",
   },
-
-  diagnosticsLabel: {
+  panelSubtle: {
+    marginTop: 4,
     fontSize: 13,
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+  resultsTopActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  modeBadge: {
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#eff6ff",
+    color: "#1d4ed8",
     fontWeight: 800,
-    color: "#7c2d12",
-    textTransform: "uppercase",
+    fontSize: 12,
     letterSpacing: "0.04em",
   },
-
-  issueList: {
-    display: "grid",
-    gap: 10,
-  },
-
-  issueCard: {
-    border: "1px solid #fdba74",
-    background: "#fff7ed",
-    borderRadius: 12,
-    padding: 12,
-    display: "grid",
-    gap: 8,
-  },
-
-  issueTitle: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#111827",
-  },
-
-  issueMeta: {
-    fontSize: 12,
-    color: "#7c2d12",
-  },
-
-  issueText: {
-    fontSize: 13,
-    color: "#44403c",
-    lineHeight: 1.5,
-    whiteSpace: "pre-wrap",
-  },
-
-  issueSubBlock: {
-    display: "grid",
-    gap: 8,
-    paddingTop: 6,
-  },
-
-  fixBox: {
-    border: "1px solid #fcd34d",
-    background: "#fffbeb",
-    borderRadius: 12,
-    padding: 10,
-  },
-
-  fixTitle: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#92400e",
-    marginBottom: 6,
-  },
-
-  fixCode: {
-    margin: 0,
-    padding: 12,
-    borderRadius: 10,
-    background: "#111827",
-    color: "#e5e7eb",
-    fontSize: 12,
-    overflow: "auto",
-    whiteSpace: "pre-wrap",
-  },
-
   primaryBtn: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    width: "100%",
     padding: "12px 16px",
-    borderRadius: 12,
+    borderRadius: 14,
     border: "none",
-    background: "#8b5cf6",
+    background: "linear-gradient(135deg, #2563eb, #4f46e5)",
     color: "#fff",
-    fontWeight: 800,
     fontSize: 14,
-    cursor: "pointer",
-    boxShadow: "none",
-    whiteSpace: "nowrap",
-  },
-
-  primaryBtnCompact: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    padding: "12px 16px",
-    borderRadius: 12,
-    border: "none",
-    background: "#8b5cf6",
-    color: "#fff",
     fontWeight: 800,
-    fontSize: 14,
     cursor: "pointer",
-    boxShadow: "none",
-    whiteSpace: "nowrap",
+    boxShadow: "0 10px 24px rgba(37, 99, 235, 0.24)",
   },
-
   secondaryBtn: {
-    padding: "9px 12px",
-    borderRadius: 10,
-    border: "1px solid #d1d5db",
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid #dbe3f0",
     background: "#fff",
+    color: "#0f172a",
+    fontSize: 13,
+    fontWeight: 700,
     cursor: "pointer",
-    fontWeight: 600,
-    color: "#111827",
-    whiteSpace: "nowrap",
   },
-
   infoBox: {
-    padding: 12,
-    borderRadius: 10,
-    background: "#f8fafc",
-    border: "1px solid #e6eaf2",
-    color: "#475569",
+    padding: 16,
+    borderRadius: 16,
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    color: "#334155",
+    fontSize: 14,
   },
-
   errorInfo: {
-    background: "#fef2f2",
     borderColor: "#fecaca",
+    background: "#fef2f2",
     color: "#991b1b",
   },
-
-  rightPane: {
-    minWidth: 0,
-    width: "100%",
-    border: "1px solid #e5e7eb",
-    borderRadius: 18,
-    background: "#fff",
-    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
-    overflow: "hidden",
-  },
-
-  resultsHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
-    padding: "14px 16px 12px",
-    borderBottom: "1px solid #eef2f7",
-    flexWrap: "wrap",
-  },
-
-  resultsTopActions: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    flexWrap: "wrap",
-  },
-
-  panelTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    color: "#111827",
-    marginBottom: 4,
-    lineHeight: 1.15,
-  },
-
-  panelSubtle: {
-    fontSize: 12,
-    color: "#6b7280",
-    lineHeight: 1.4,
-    maxWidth: 620,
-  },
-
-  modeBadge: {
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "#ffffff",
-    border: "1px solid #dbe3f0",
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: 800,
-    whiteSpace: "nowrap",
-  },
-
-  resultsInner: {
-    padding: 16,
-    minWidth: 0,
-  },
-
-  resultsProgress: {
-    marginBottom: 14,
-    padding: "6px 0 2px",
-  },
-
-  resultsProgressTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-    color: "#475569",
-    fontSize: 13,
-    marginBottom: 8,
-  },
-
-  dotGroup: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-  },
-
-  resultsProgressBarTrack: {
-    height: 6,
-    borderRadius: 999,
-    background: "#e8edf7",
-    overflow: "hidden",
-  },
-
-  resultsProgressBarFill: {
-    width: "65%",
-    height: "100%",
-    borderRadius: 999,
-    background: "linear-gradient(90deg, #8b5cf6 0%, #60a5fa 100%)",
-  },
-
-  successBox: {
-    marginTop: 8,
-    padding: 18,
-    borderRadius: 16,
+  runningCard: {
+    padding: 20,
+    borderRadius: 20,
     border: "1px solid #dbeafe",
-    background: "#f8fbff",
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
+    boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
     display: "grid",
     gap: 12,
   },
-
-  successTitle: {
+  runningTitle: {
     fontSize: 18,
-    fontWeight: 800,
+    fontWeight: 900,
     color: "#0f172a",
   },
-
+  runningText: {
+    color: "#475569",
+    fontSize: 14,
+  },
+  runningDots: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  progressInfoBox: {
+    display: "grid",
+    gap: 6,
+    padding: 14,
+    borderRadius: 14,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+  },
+  progressRow: {
+    fontSize: 13,
+    color: "#334155",
+  },
+  successCard: {
+    padding: 20,
+    borderRadius: 20,
+    border: "1px solid #bbf7d0",
+    background: "linear-gradient(180deg, #ffffff 0%, #f7fff9 100%)",
+    boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
+    display: "grid",
+    gap: 12,
+  },
+  successTitle: {
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#166534",
+  },
   successText: {
     fontSize: 14,
     color: "#475569",
-    lineHeight: 1.5,
   },
-
   successActions: {
     display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  testCasesWrap: {
+    display: "grid",
+    gap: 16,
+  },
+  resultsInner: {
+    display: "grid",
+    gap: 16,
+  },
+  emptyState: {
+    padding: 28,
+    borderRadius: 20,
+    border: "1px dashed #cbd5e1",
+    background: "#fff",
+    textAlign: "center",
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#0f172a",
+  },
+  emptyStateText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: "#64748b",
+  },
+  paginationBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    padding: "12px 14px",
+    borderRadius: 16,
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+  },
+  paginationMeta: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: 700,
+  },
+  paginationControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  pageSizeSelect: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid #dbe3f0",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 13,
+    fontWeight: 600,
+  },
+  tableOnlyWrap: {
+    minWidth: 0,
+    transition: "filter 0.2s ease",
+  },
+  tableOnlyWrapBlurred: {
+    filter: "blur(2px)",
+  },
+  tablePane: {
+    borderRadius: 20,
+    border: "1px solid #e8eef6",
+    background: "#fff",
+    overflow: "hidden",
+    boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
+  },
+  tablePaneHead: {
+    padding: "16px 18px",
+    borderBottom: "1px solid #eef2f7",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
     flexWrap: "wrap",
   },
-
-  emptyState: {
-    border: "1px dashed #dbe3ef",
-    borderRadius: 16,
-    padding: "28px 20px",
-    textAlign: "center",
-    background: "#fcfdff",
-  },
-
-  emptyStateTitle: {
+  tablePaneTitle: {
     fontSize: 18,
-    fontWeight: 800,
-    color: "#111827",
-    marginBottom: 8,
+    fontWeight: 900,
+    color: "#0f172a",
   },
-
-  emptyStateText: {
+  tablePaneMeta: {
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: 700,
+  },
+  tableWrap: {
+    overflowX: "auto",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+  },
+  th: {
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
+    padding: "12px 14px",
+    textAlign: "left",
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#475569",
+    background: "#f8fafc",
+    borderBottom: "1px solid #e5e7eb",
+    whiteSpace: "nowrap",
+  },
+  td: {
+    padding: "12px 14px",
+    fontSize: 13,
+    color: "#334155",
+    borderBottom: "1px solid #f1f5f9",
+    verticalAlign: "top",
+  },
+  tdMono: {
+    padding: "12px 14px",
+    fontSize: 12,
+    color: "#0f172a",
+    borderBottom: "1px solid #f1f5f9",
+    verticalAlign: "top",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  },
+  tdTitle: {
+    padding: "12px 14px",
+    fontSize: 13,
+    color: "#0f172a",
+    borderBottom: "1px solid #f1f5f9",
+    verticalAlign: "top",
+    fontWeight: 700,
+  },
+  tdApi: {
+    padding: "12px 14px",
+    fontSize: 12,
+    color: "#334155",
+    borderBottom: "1px solid #f1f5f9",
+    verticalAlign: "top",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  },
+  trActive: {
+    background: "#f8fbff",
+  },
+  viewBtn: {
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid #dbe3f0",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  viewBtnActive: {
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  previewOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.28)",
+    zIndex: 50,
+    animation: "overlayFadeIn 0.18s ease-out forwards",
+  },
+  previewDrawer: {
+    position: "fixed",
+    top: 0,
+    right: 0,
+    width: 520,
+    maxWidth: "100vw",
+    height: "100vh",
+    background: "#fff",
+    zIndex: 60,
+    boxShadow: "-10px 0 30px rgba(15, 23, 42, 0.16)",
+    display: "grid",
+    gridTemplateRows: "auto 1fr",
+    animation: "previewSlideIn 0.22s ease-out forwards",
+  },
+  previewHead: {
+    padding: "18px 20px",
+    borderBottom: "1px solid #eef2f7",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  previewTitle: {
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#0f172a",
+  },
+  previewSubtle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#64748b",
+  },
+  previewCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 16,
+    fontWeight: 700,
+  },
+  previewBody: {
+    overflowY: "auto",
+    padding: 20,
+    display: "grid",
+    gap: 16,
+  },
+  previewSection: {
+    display: "grid",
+    gap: 8,
+  },
+  previewCaseTitle: {
+    fontSize: 20,
+    fontWeight: 900,
+    color: "#0f172a",
+    lineHeight: 1.2,
+  },
+  previewMeta: {
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: 700,
+  },
+  previewGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 12,
+  },
+  previewMiniCard: {
+    padding: 14,
+    borderRadius: 14,
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    minWidth: 0,
+  },
+  previewMiniLabel: {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    marginBottom: 6,
+  },
+  previewMiniValue: {
     fontSize: 14,
-    color: "#6b7280",
-    lineHeight: 1.5,
+    color: "#0f172a",
+    fontWeight: 700,
+  },
+  previewMiniValueMono: {
+    fontSize: 12,
+    color: "#0f172a",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    wordBreak: "break-word",
+  },
+  previewLabel: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#334155",
+  },
+  previewText: {
+    fontSize: 14,
+    color: "#334155",
+    lineHeight: 1.6,
+  },
+  previewCodeBlock: {
+    margin: 0,
+    padding: 14,
+    borderRadius: 14,
+    background: "#0f172a",
+    color: "#e2e8f0",
+    fontSize: 12,
+    lineHeight: 1.6,
+    overflowX: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  previewCodeBlockLight: {
+    margin: 0,
+    padding: 14,
+    borderRadius: 14,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    color: "#0f172a",
+    fontSize: 12,
+    lineHeight: 1.6,
+    overflowX: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  endpointWarning: {
+    fontSize: 12,
+    color: "#9a3412",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    padding: "10px 12px",
+    borderRadius: 12,
+  },
+  detailList: {
+    margin: 0,
+    paddingLeft: 18,
+    color: "#334155",
+    fontSize: 14,
+    lineHeight: 1.7,
+  },
+  detailMuted: {
+    color: "#94a3b8",
+    fontSize: 14,
   },
 };
