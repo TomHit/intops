@@ -587,7 +587,39 @@ async function buildDeterministicTestPlan({
   const endpointMap = buildEndpointMap(endpoints);
   const perEndpointSeq = new Map();
 
-  const rawCases = await generateCasesForEndpoints(endpoints, options);
+  let rawCases = [];
+
+  if (options.include.includes("contract")) {
+    const cases = await generateCasesForEndpoints(endpoints, {
+      ...options,
+      include: ["contract"],
+    });
+    rawCases.push(...cases);
+  }
+
+  if (options.include.includes("schema")) {
+    const cases = await generateCasesForEndpoints(endpoints, {
+      ...options,
+      include: ["schema"],
+    });
+    rawCases.push(...cases);
+  }
+
+  if (options.include.includes("negative")) {
+    const cases = await generateCasesForEndpoints(endpoints, {
+      ...options,
+      include: ["negative"],
+    });
+    rawCases.push(...cases);
+  }
+
+  if (options.include.includes("auth")) {
+    const cases = await generateCasesForEndpoints(endpoints, {
+      ...options,
+      include: ["auth"],
+    });
+    rawCases.push(...cases);
+  }
   const normalizedCases = [];
 
   for (const testCase of rawCases) {

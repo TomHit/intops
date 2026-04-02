@@ -405,9 +405,15 @@ export default function GeneratorPage({
           ...run,
           testplan: reconstructedTestplan,
           report: {
-            total_cases: data.total_cases || 0,
-            needs_review: cases.filter((c) => !!c.needs_review).length,
-            endpoint_count: uniqueEndpointCount,
+            ...(run.report || {}),
+            total_cases: data.total_cases || run.report?.total_cases || 0,
+            needs_review:
+              run.report?.needs_review ??
+              cases.filter((c) => !!c.needs_review).length,
+            endpoint_count:
+              run.report?.endpoint_count ??
+              run.eligible_endpoints?.length ??
+              uniqueEndpointCount,
           },
         };
 
@@ -551,7 +557,11 @@ export default function GeneratorPage({
       created_by: userId,
       env: resolvedOptions.env,
       auth_profile: resolvedOptions.auth_profile,
-      include: resolvedOptions.include,
+      include:
+        Array.isArray(resolvedOptions.include) &&
+        resolvedOptions.include.length > 0
+          ? resolvedOptions.include
+          : ["contract", "schema"],
       guidance: resolvedOptions.guidance,
       endpoints: endpointRefs,
       ai: !!resolvedOptions.ai,
@@ -719,109 +729,117 @@ export default function GeneratorPage({
   return (
     <div style={styles.page}>
       <style>{`
-        @keyframes buttonSpin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
+  @keyframes buttonSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
 
-        @keyframes dotPulse {
-          0%, 100% { opacity: 0.35; transform: scale(0.9); }
-          50% { opacity: 1; transform: scale(1); }
-        }
-        @keyframes previewSlideIn {
-          from {
-            transform: translateX(100%);
-            opacity: 0.92;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
+  @keyframes dotPulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1); }
+  }
 
-        @keyframes overlayFadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
+  @keyframes previewSlideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0.92;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
 
-        .gen-spinner {
-          width: 16px;
-          height: 16px;
-          border: 2px solid rgba(255,255,255,0.35);
-          border-top-color: #ffffff;
-          border-radius: 999px;
-          display: inline-block;
-          animation: buttonSpin 0.8s linear infinite;
-          flex-shrink: 0;
-        }
+  @keyframes overlayFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 
-        .gen-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: #60a5fa;
-          animation: dotPulse 1.1s ease-in-out infinite;
-        }
+  .gen-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #ffffff;
+    border-radius: 999px;
+    display: inline-block;
+    animation: buttonSpin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
 
-        .gen-dot:nth-child(2) { animation-delay: 0.12s; }
-        .gen-dot:nth-child(3) { animation-delay: 0.24s; }
-        .gen-dot:nth-child(4) { animation-delay: 0.36s; }
-        .gen-dot:nth-child(5) { animation-delay: 0.48s; }
+  .gen-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #60a5fa;
+    animation: dotPulse 1.1s ease-in-out infinite;
+  }
 
-        @media (max-width: 1220px) {
-          .generator-main-grid {
-            grid-template-columns: 1fr !important;
-          }
+  .gen-dot:nth-child(2) { animation-delay: 0.12s; }
+  .gen-dot:nth-child(3) { animation-delay: 0.24s; }
+  .gen-dot:nth-child(4) { animation-delay: 0.36s; }
+  .gen-dot:nth-child(5) { animation-delay: 0.48s; }
 
-          .generator-left-pane {
-            position: relative !important;
-            top: 0 !important;
-            max-height: none !important;
-          }
+  @media (max-width: 1360px) {
+  .generator-main-grid {
+    grid-template-columns: 390px minmax(0, 1fr) !important;
+  }
+}
 
-          .generator-left-body {
-            max-height: none !important;
-          }
-        }
+  @media (max-width: 1220px) {
+    .generator-main-grid {
+      grid-template-columns: 1fr !important;
+    }
 
-        @media (max-width: 860px) {
-          .results-header {
-            flex-direction: column !important;
-            align-items: stretch !important;
-          }
+    .generator-left-pane {
+      position: relative !important;
+      top: 0 !important;
+      max-height: none !important;
+    }
 
-          .results-top-actions {
-            width: 100%;
-            justify-content: flex-start !important;
-          }
+    .generator-left-body {
+      max-height: none !important;
+      overflow: visible !important;
+    }
+  }
 
-          .explorer-footer-top {
-            flex-direction: column !important;
-            align-items: stretch !important;
-          }
+  @media (max-width: 860px) {
+    .results-header {
+      flex-direction: column !important;
+      align-items: stretch !important;
+    }
 
-          .explorer-footer-actions {
-            width: 100%;
-            justify-content: stretch !important;
-          }
+    .results-top-actions {
+      width: 100%;
+      justify-content: flex-start !important;
+    }
 
-          .explorer-footer-actions > button {
-            flex: 1 1 auto;
-          }
+    .explorer-footer-top {
+      flex-direction: column !important;
+      align-items: stretch !important;
+    }
 
-          .success-actions {
-            flex-direction: column !important;
-          }
+    .explorer-footer-actions {
+      width: 100%;
+      justify-content: stretch !important;
+    }
 
-          .success-actions > button {
-            width: 100%;
-          }
+    .explorer-footer-actions > button {
+      flex: 1 1 auto;
+    }
 
-          .preview-drawer {
-            width: 100vw !important;
-          }
-        }
-      `}</style>
+    .success-actions {
+      flex-direction: column !important;
+    }
+
+    .success-actions > button {
+      width: 100%;
+    }
+
+    .preview-drawer {
+      width: 100vw !important;
+    }
+  }
+`}</style>
 
       {!resolvedProjectId && (
         <div style={styles.notice}>
@@ -1339,7 +1357,11 @@ export default function GeneratorPage({
           </aside>
 
           <section style={styles.rightPane}>
-            <div className="results-header" style={styles.resultsHeader}>
+            <div style={styles.resultsCard}>
+              <div
+                className="results-header"
+                style={styles.resultsHeader}
+              ></div>
               <div>
                 <div style={styles.panelTitle}>Results</div>
                 <div style={styles.panelSubtle}>
@@ -1446,12 +1468,12 @@ export default function GeneratorPage({
     </div>
   );
 }
-
 const styles = {
   page: {
     display: "grid",
     gap: 16,
   },
+
   notice: {
     padding: "14px 16px",
     borderRadius: 14,
@@ -1460,115 +1482,136 @@ const styles = {
     color: "#9a3412",
     fontSize: 14,
   },
+
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "320px minmax(0, 1fr)",
+    gridTemplateColumns: "430px minmax(0, 1fr)",
     gap: 20,
-    alignItems: "start",
+    alignItems: "stretch",
+    marginTop: -8,
   },
+  resultsCard: {
+    display: "grid",
+    gap: 16,
+    padding: 18,
+    borderRadius: 20,
+    border: "1px solid rgba(148, 163, 184, 0.16)",
+    background:
+      "linear-gradient(180deg, rgba(6, 18, 48, 0.72) 0%, rgba(4, 15, 40, 0.82) 100%)",
+    boxShadow: "0 10px 28px rgba(2, 8, 23, 0.24)",
+  },
+
   leftPane: {
     position: "sticky",
-    top: 12,
+    top: 8,
     display: "grid",
     gridTemplateRows: "auto minmax(0, 1fr) auto",
     gap: 0,
-    borderRadius: 20,
+    borderRadius: 22,
     border: "1px solid #e8eef6",
-    background: "#fff",
+    background: "#ffffff",
     overflow: "hidden",
     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
-    maxHeight: "calc(100vh - 160px)",
+    maxHeight: "calc(100vh - 72px)",
     minHeight: 0,
     alignSelf: "start",
   },
+
   leftPaneHeader: {
-    padding: "16px 18px",
+    padding: "16px 18px 12px",
     borderBottom: "1px solid #eef2f7",
     background: "#f8fafc",
   },
+
   leftTitle: {
     fontSize: 18,
     fontWeight: 900,
     color: "#0f172a",
   },
+
   leftSubtle: {
     marginTop: 4,
     fontSize: 12,
     color: "#64748b",
   },
+
   explorerBody: {
-    padding: 16,
+    padding: 12,
     overflowY: "auto",
     overflowX: "hidden",
     minHeight: 0,
+    background: "#ffffff",
   },
+
   explorerFooter: {
-    padding: 16,
+    padding: 12,
     borderTop: "1px solid #eef2f7",
     display: "grid",
-    gap: 12,
+    gap: 10,
     background: "#fff",
     flexShrink: 0,
   },
+
   explorerFooterTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+    display: "grid",
+
+    gap: 10,
   },
+
   explorerFooterActions: {
     display: "flex",
     alignItems: "center",
     gap: 8,
     flexWrap: "wrap",
   },
+
   countBadge: {
     display: "inline-flex",
     alignItems: "center",
-    padding: "8px 12px",
+    padding: "6px 10px",
     borderRadius: 999,
     background: "#eef2ff",
     color: "#3730a3",
     fontWeight: 700,
-    fontSize: 13,
+    fontSize: 12,
   },
+
   rightPane: {
     display: "grid",
     gap: 16,
     minWidth: 0,
   },
+
   resultsHeader: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 16,
+    gap: 14,
+    flexWrap: "wrap",
   },
-  panelTitle: {
-    fontSize: 22,
-    fontWeight: 900,
-    color: "#0f172a",
-    letterSpacing: "-0.02em",
-  },
-  panelSubtle: {
-    marginTop: 4,
-    fontSize: 13,
-    color: "#64748b",
-    lineHeight: 1.5,
-  },
+
   resultsTopActions: {
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    justifyContent: "flex-start",
+    gap: 12,
     flexWrap: "wrap",
+    flexShrink: 0,
   },
+
   modeBadge: {
-    padding: "8px 12px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 40,
+    padding: "0 16px",
     borderRadius: 999,
-    background: "#eff6ff",
-    color: "#1d4ed8",
+    background: "#eef2ff",
+    color: "#3658db",
+    fontSize: 13,
     fontWeight: 800,
-    fontSize: 12,
-    letterSpacing: "0.04em",
+    letterSpacing: "0.03em",
+    whiteSpace: "nowrap",
   },
   primaryBtn: {
     display: "inline-flex",

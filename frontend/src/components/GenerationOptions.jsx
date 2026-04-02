@@ -63,7 +63,6 @@ function RadioCard({ checked, title, help, onChange }) {
 
 export default function GenerationOptions({ options, onChange }) {
   const safeOptions = {
-    include: [],
     ai: false,
     env: "staging",
     auth_profile: "",
@@ -71,27 +70,50 @@ export default function GenerationOptions({ options, onChange }) {
     spec_source: "",
     guidance: "",
     ...(options || {}),
+    include:
+      Array.isArray(options?.include) && options.include.length > 0
+        ? options.include
+        : ["contract", "schema", "negative", "auth"],
   };
 
   const safeOnChange = typeof onChange === "function" ? onChange : () => {};
 
   function toggleInclude(key) {
-    const set = new Set(safeOptions.include || []);
-    if (set.has(key)) set.delete(key);
-    else set.add(key);
+    safeOnChange((prev) => {
+      const next = {
+        ai: false,
+        env: "staging",
+        auth_profile: "",
+        generation_mode: "balanced",
+        spec_source: "",
+        guidance: "",
+        ...(prev || {}),
+      };
 
-    safeOnChange({
-      ...safeOptions,
-      include: Array.from(set),
+      const set = new Set(Array.isArray(next.include) ? next.include : []);
+
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+
+      return {
+        ...next,
+        include: Array.from(set),
+      };
     });
   }
 
   function selectRecommended() {
-    safeOnChange({
-      ...safeOptions,
+    safeOnChange((prev) => ({
+      ai: false,
+      env: "staging",
+      auth_profile: "",
+      generation_mode: "balanced",
+      spec_source: "",
+      guidance: "",
+      ...(prev || {}),
       include: ["contract", "schema"],
       generation_mode: "balanced",
-    });
+    }));
   }
 
   return (
@@ -126,10 +148,10 @@ export default function GenerationOptions({ options, onChange }) {
               type="checkbox"
               checked={!!safeOptions.ai}
               onChange={(e) =>
-                safeOnChange({
-                  ...safeOptions,
-                  ai: e.target.checked,
-                })
+                safeOnChange((prev) => ({
+                  ...(prev || {}),
+                  env: e.target.value,
+                }))
               }
             />
             <span>Use AI enrichment</span>

@@ -172,34 +172,14 @@ export default function WorkspacePlaceholderPage() {
         organization={organization}
       />
 
-      <main className="app-main premium-main">
+      <main className="app-main premium-main" style={{ paddingTop: 12 }}>
         {/* HEADER */}
-        <div className="workspace-header">
-          <div>
-            <h1 className="workspace-title">{getPageTitle()}</h1>
-            <p className="workspace-subtitle">
-              {mode === "organization"
-                ? `${organization?.name} workspace`
-                : "Personal workspace"}
-            </p>
-          </div>
-
-          <div className="workspace-user">
-            <div className="workspace-user-avatar">
-              {email?.[0]?.toUpperCase() || "U"}
-            </div>
-            <div className="workspace-user-meta">
-              <div className="workspace-user-email">{email}</div>
-              <div className="workspace-user-mode">{mode}</div>
-            </div>
-          </div>
-        </div>
 
         {/* CONTENT */}
-        <div style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
-          Active section: {activeNav}
+
+        <div className="workspace-content" style={{ paddingTop: 0 }}>
+          {renderContent()}
         </div>
-        <div className="workspace-content">{renderContent()}</div>
       </main>
     </div>
   );

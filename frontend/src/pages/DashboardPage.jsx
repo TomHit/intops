@@ -354,7 +354,7 @@ export default function DashboardPage({
                 generatorSettings || {
                   env: "staging",
                   auth_profile: "none",
-                  include: [],
+                  include: ["contract", "schema"],
                   ai: false,
                   endpoints_n: 10,
                   guidance_len: 0,

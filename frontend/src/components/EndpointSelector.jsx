@@ -44,7 +44,7 @@ function groupEndpoints(endpoints) {
 }
 
 export default function EndpointSelector({ endpoints, selection, onChange }) {
-  const [visibleCount, setVisibleCount] = useState(150);
+  const [visibleCount, setVisibleCount] = useState(120);
   const [collapsedGroups, setCollapsedGroups] = useState({});
 
   const tags = useMemo(() => uniqueTags(endpoints), [endpoints]);
@@ -77,7 +77,7 @@ export default function EndpointSelector({ endpoints, selection, onChange }) {
   const grouped = useMemo(() => groupEndpoints(filtered), [filtered]);
 
   useEffect(() => {
-    setVisibleCount(150);
+    setVisibleCount(120);
   }, [
     selection?.filter?.q,
     selection?.filter?.method,
@@ -350,17 +350,19 @@ export default function EndpointSelector({ endpoints, selection, onChange }) {
 
 const styles = {
   wrap: {
-    display: "grid",
-    gap: 4,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
     minWidth: 0,
     width: "100%",
     height: "100%",
+    minHeight: 0,
   },
 
   topBar: {
     display: "grid",
     gap: 4,
-    padding: "0 2px 2px",
+    padding: "0 2px 0",
   },
 
   topMeta: {
@@ -370,7 +372,7 @@ const styles = {
 
   topActions: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.15fr) 0.85fr 0.85fr",
+    gridTemplateColumns: "minmax(0, 1.1fr) 0.8fr 0.8fr",
     gap: 6,
     alignItems: "center",
   },
@@ -420,7 +422,7 @@ const styles = {
     justifyContent: "space-between",
     gap: 8,
     flexWrap: "wrap",
-    padding: "0 2px 4px",
+    padding: "0 2px 2px",
   },
 
   checkboxRow: {
@@ -453,22 +455,23 @@ const styles = {
 
   treeShell: {
     border: "1px solid #e7edf5",
-    borderRadius: 10,
+    borderRadius: 12,
     background: "#ffffff",
-    minHeight: 420,
-    overflow: "visible",
+    minHeight: 0,
+    flex: 1,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
 
   treeScroll: {
-    overflow: "visible",
-    padding: 2,
-    minHeight: 0,
+    overflowY: "auto",
   },
 
   groupBlock: {
     display: "grid",
-    gap: 0,
-    marginBottom: 0,
+    gap: 1,
+    marginBottom: 1,
   },
 
   groupHeader: {
@@ -476,8 +479,8 @@ const styles = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 6,
-    padding: "0",
-    minHeight: 28,
+    padding: "1px 0",
+    minHeight: 26,
   },
 
   groupToggle: {
@@ -542,16 +545,16 @@ const styles = {
   endpointList: {
     display: "grid",
     gap: 0,
-    paddingLeft: 16,
+    paddingLeft: 12,
   },
 
   endpointRow: {
     display: "grid",
-    gridTemplateColumns: "14px 42px minmax(0, 1fr)",
-    gap: 6,
+    gridTemplateColumns: "18px 58px minmax(0, 1fr)",
+    gap: 10,
     alignItems: "start",
-    padding: "3px 6px",
-    borderRadius: 6,
+    padding: "6px 10px",
+    borderRadius: 8,
     cursor: "pointer",
     border: "1px solid transparent",
     minWidth: 0,
@@ -599,7 +602,7 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    lineHeight: 1.1,
+    lineHeight: 1.05,
   },
 
   authBadge: {
@@ -621,15 +624,18 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    lineHeight: 1.05,
+    lineHeight: 1.02,
   },
 
   moreWrap: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    gap: 10,
     flexWrap: "wrap",
-    padding: "2px 2px 0",
+    padding: "6px 2px 0",
+    borderTop: "1px solid #eef2f7",
+    marginTop: 2,
   },
 
   moreMeta: {
@@ -638,7 +644,7 @@ const styles = {
   },
 
   footer: {
-    marginTop: 1,
+    marginTop: 2,
     fontSize: 11,
     color: "#64748b",
     display: "flex",
