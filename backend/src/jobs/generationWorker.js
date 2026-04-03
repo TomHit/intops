@@ -1,4 +1,9 @@
 import { updateJob } from "./jobStore.js";
+import {
+  acquireProjectLock,
+  extendProjectLock,
+  releaseProjectLock,
+} from "./projectLock.js";
 
 import { generateTestPlan } from "../services/generator.js";
 import {
@@ -21,6 +26,7 @@ const DEFAULT_GENERATION_MODE = "balanced";
 const DEFAULT_INCLUDE_TYPES = ["contract", "schema", "auth", "negative"];
 const DEFAULT_ENV = "staging";
 const DEFAULT_INSERT_CHUNK_SIZE = 200;
+const PROJECT_LOCK_TTL_MS = 30 * 60 * 1000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -29,6 +35,38 @@ function nowIso() {
 function normalizeString(value, fallback = "") {
   const text = String(value ?? "").trim();
   return text || fallback;
+}
+
+function buildProgressSnapshot({
+  processedEndpoints,
+  endpointCount,
+  processedBatches,
+  totalBatches,
+  insertedCases,
+  needsReviewCount,
+  message,
+}) {
+  const safeTotal = Math.max(0, Number(endpointCount || 0));
+  const safeCurrent = Math.min(
+    safeTotal,
+    Math.max(0, Number(processedEndpoints || 0)),
+  );
+  const percent =
+    safeTotal > 0
+      ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100))
+      : 0;
+
+  return {
+    progress_current: safeCurrent,
+    progress_total: safeTotal,
+    percent,
+    processed_batches: processedBatches,
+    total_batches: totalBatches,
+    inserted_cases: insertedCases,
+    needs_review: needsReviewCount,
+    endpoint_count: safeTotal,
+    message,
+  };
 }
 
 function normalizeArray(value, fallback = []) {
@@ -83,18 +121,17 @@ function buildCaseRows({ cases, runId, projectId, orgId }) {
   });
 }
 
-function buildInitialProgress(config) {
-  return {
-    progress_current: 0,
-    progress_total: config.endpointCount,
-    processed_batches: 0,
-    total_batches: 0,
-    inserted_cases: 0,
-    needs_review: 0,
-    endpoint_count: 0,
-  };
+function buildInitialProgress(config, totalBatches = 0) {
+  return buildProgressSnapshot({
+    processedEndpoints: 0,
+    endpointCount: config.endpointCount,
+    processedBatches: 0,
+    totalBatches,
+    insertedCases: 0,
+    needsReviewCount: 0,
+    message: `Starting ${totalBatches} batch${totalBatches === 1 ? "" : "es"}`,
+  });
 }
-
 function buildJobResult({
   runId,
   out,
@@ -127,9 +164,11 @@ function buildJobResult({
 export async function runGenerationJob(jobId, requestBody) {
   let project = null;
   let config = null;
+  let lockAcquired = false;
+  const lockOwner = jobId;
 
   try {
-    updateJob(jobId, {
+    await updateJob(jobId, {
       status: "running",
       started_at: nowIso(),
       error: null,
@@ -148,6 +187,16 @@ export async function runGenerationJob(jobId, requestBody) {
 
     if (!config.createdBy) {
       throw new Error("created_by is required");
+    }
+
+    lockAcquired = await acquireProjectLock(
+      config.projectId,
+      lockOwner,
+      PROJECT_LOCK_TTL_MS,
+    );
+
+    if (!lockAcquired) {
+      throw new Error("Generation already in progress for this project");
     }
 
     project = await getProjectById(config.projectId);
@@ -169,26 +218,28 @@ export async function runGenerationJob(jobId, requestBody) {
     });
 
     const batches = Array.isArray(out?.batches) ? out.batches : [];
+    console.log(
+      "FIRST BATCH SAMPLE:",
+      JSON.stringify(batches[0] || {}, null, 2),
+    );
     const totalBatches = batches.length;
 
     let processedEndpoints = 0;
     let insertedCases = 0;
     let needsReviewCount = 0;
+    const seenEndpoints = new Set();
 
-    updateJob(jobId, {
+    await updateJob(jobId, {
       status: "running",
       updated_at: nowIso(),
-      progress: {
-        ...buildInitialProgress(config),
-        total_batches: totalBatches,
-        message: `Starting ${totalBatches} batch${totalBatches === 1 ? "" : "es"}`,
-      },
+      progress: buildInitialProgress(config, totalBatches),
     });
 
     for (let i = 0; i < batches.length; i += 1) {
       const batch = batches[i];
       const batchCases = Array.isArray(batch?.cases) ? batch.cases : [];
-      const batchEndpoints = Number(batch?.endpoints_count || 0);
+
+      await extendProjectLock(config.projectId, lockOwner, PROJECT_LOCK_TTL_MS);
 
       const caseRows = buildCaseRows({
         cases: batchCases,
@@ -203,23 +254,32 @@ export async function runGenerationJob(jobId, requestBody) {
 
       insertedCases += inserted;
       needsReviewCount += batchCases.filter((tc) => !!tc?.needs_review).length;
-      processedEndpoints += batchEndpoints;
+      batchCases.forEach((tc) => {
+        const method = tc?.api_details?.method || "";
+        const path = tc?.api_details?.path || "";
+        const key = `${method}-${path}`;
+
+        if (method && path) {
+          seenEndpoints.add(key);
+        }
+      });
+
+      processedEndpoints = seenEndpoints.size;
 
       await updateRunProgress(config.runId, processedEndpoints);
 
-      updateJob(jobId, {
+      await updateJob(jobId, {
         status: "running",
         updated_at: nowIso(),
-        progress: {
-          progress_current: processedEndpoints,
-          progress_total: config.endpointCount,
-          processed_batches: i + 1,
-          total_batches: totalBatches,
-          inserted_cases: insertedCases,
-          needs_review: needsReviewCount,
-          endpoint_count: config.endpointCount,
+        progress: buildProgressSnapshot({
+          processedEndpoints,
+          endpointCount: config.endpointCount,
+          processedBatches: i + 1,
+          totalBatches,
+          insertedCases,
+          needsReviewCount,
           message: `Processed batch ${i + 1} of ${totalBatches}`,
-        },
+        }),
       });
 
       await new Promise((resolve) => setImmediate(resolve));
@@ -236,19 +296,18 @@ export async function runGenerationJob(jobId, requestBody) {
       await deleteCasesByRun(previousRunId);
     }
 
-    updateJob(jobId, {
+    await updateJob(jobId, {
       status: "completed",
       completed_at: nowIso(),
-      progress: {
-        progress_current: config.endpointCount,
-        progress_total: config.endpointCount,
-        processed_batches: totalBatches,
-        total_batches: totalBatches,
-        inserted_cases: totalCases,
-        needs_review: needsReviewCount,
-        endpoint_count: config.endpointCount,
+      progress: buildProgressSnapshot({
+        processedEndpoints: config.endpointCount,
+        endpointCount: config.endpointCount,
+        processedBatches: totalBatches,
+        totalBatches,
+        insertedCases: totalCases,
+        needsReviewCount,
         message: "Generation completed",
-      },
+      }),
       result: buildJobResult({
         runId: config.runId,
         out,
@@ -280,7 +339,7 @@ export async function runGenerationJob(jobId, requestBody) {
       }
     }
 
-    updateJob(jobId, {
+    await updateJob(jobId, {
       status: "failed",
       completed_at: nowIso(),
       error: {
@@ -291,5 +350,13 @@ export async function runGenerationJob(jobId, requestBody) {
           process.env.NODE_ENV === "development" ? error?.stack || null : null,
       },
     });
+  } finally {
+    if (lockAcquired && config?.projectId) {
+      try {
+        await releaseProjectLock(config.projectId, lockOwner);
+      } catch (innerErr) {
+        console.error("PROJECT LOCK RELEASE ERROR:", innerErr);
+      }
+    }
   }
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { List } from "react-window";
 import EndpointSelector from "../components/EndpointSelector";
 import ResultsSummary from "../components/ResultsSummary";
 import { TEST_CASE_CSV_COLUMNS } from "../utils/testCaseColumns";
@@ -42,42 +43,6 @@ function summarizeTestData(testData) {
     testData.request_body !== undefined && testData.request_body !== null;
 
   return `path:${pathCount} query:${queryCount} headers:${headerCount} cookies:${cookieCount} body:${hasBody ? "yes" : "no"}`;
-}
-
-function deriveTableRows(testplan) {
-  const rows = [];
-  if (!testplan?.suites) return rows;
-
-  testplan.suites.forEach((s, si) => {
-    (s.cases || []).forEach((tc, ci) => {
-      rows.push({
-        suite_id: s.suite_id || "",
-        id: tc.id || "",
-        title: tc.title || "",
-        module: tc.module || "",
-        test_type: tc.test_type || "",
-        priority: tc.priority || "",
-        objective: tc.objective || "",
-        preconditions: Array.isArray(tc.preconditions) ? tc.preconditions : [],
-        test_data: tc.test_data || {},
-        test_data_summary: summarizeTestData(tc.test_data),
-        steps: Array.isArray(tc.steps) ? tc.steps : [],
-        expected_results: Array.isArray(tc.expected_results)
-          ? tc.expected_results
-          : [],
-        api_details: tc.api_details || {},
-        validation_focus: Array.isArray(tc.validation_focus)
-          ? tc.validation_focus
-          : [],
-        references: Array.isArray(tc.references) ? tc.references : [],
-        needs_review: !!tc.needs_review,
-        review_notes: tc.review_notes || "",
-        ref: { suiteIndex: si, caseIndex: ci },
-      });
-    });
-  });
-
-  return rows;
 }
 
 function downloadText(filename, text, mime = "application/octet-stream") {
@@ -169,6 +134,103 @@ function getEndpointDisplay(apiDetails = {}) {
   };
 }
 
+const VirtualCaseRow = React.memo(function VirtualCaseRow(props) {
+  const { index, style, rows, selectedCaseId, isPreviewOpen, onSelect } = props;
+
+  const row = rows?.[index];
+  if (!row) return null;
+
+  const isActive = selectedCaseId === row.id;
+
+  return (
+    <div
+      style={{
+        ...style,
+        ...styles.virtualRow,
+        ...(isActive ? styles.virtualRowActive : {}),
+      }}
+    >
+      <div
+        style={{
+          ...styles.virtualCellMono,
+          width: 300,
+          minWidth: 300,
+          maxWidth: 300,
+        }}
+      >
+        {row.id || "-"}
+      </div>
+
+      <div
+        style={{
+          ...styles.virtualCellTitle,
+          width: 420,
+          minWidth: 420,
+          maxWidth: 420,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          textOverflow: "ellipsis",
+        }}
+        title={row.title || "-"}
+      >
+        {row.title || "-"}
+      </div>
+
+      <div
+        style={{
+          ...styles.virtualCell,
+          width: 130,
+          minWidth: 130,
+          maxWidth: 130,
+        }}
+      >
+        {row.test_type || "-"}
+      </div>
+
+      <div
+        style={{
+          ...styles.virtualCell,
+          width: 120,
+          minWidth: 120,
+          maxWidth: 120,
+        }}
+      >
+        {row.priority || "-"}
+      </div>
+
+      <div
+        style={{
+          ...styles.virtualCellApi,
+          width: 250,
+          minWidth: 250,
+          maxWidth: 250,
+        }}
+        title={getEndpointDisplay(row.api_details).summary}
+      >
+        {getEndpointDisplay(row.api_details).summary}
+      </div>
+
+      <div
+        style={{
+          ...styles.virtualCellAction,
+          width: 110,
+          minWidth: 110,
+          maxWidth: 110,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => onSelect?.(row.id)}
+          style={
+            isActive && isPreviewOpen ? styles.viewBtnActive : styles.viewBtn
+          }
+        >
+          View
+        </button>
+      </div>
+    </div>
+  );
+});
 export default function GeneratorPage({
   projectId,
   selectedProjectId,
@@ -199,6 +261,7 @@ export default function GeneratorPage({
   const [endpointsLoading, setEndpointsLoading] = useState(true);
   const [endpointsErr, setEndpointsErr] = useState("");
   const [endpoints, setEndpoints] = useState([]);
+  const [tableRows, setTableRows] = useState([]);
 
   const [selection, setSelection] = useState({
     selected_endpoint_ids: [],
@@ -224,18 +287,12 @@ export default function GeneratorPage({
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [jobProgress, setJobProgress] = useState(null);
-  const [activeJobId, setActiveJobId] = useState("");
 
   // paginated test-cases state
   const [casesPage, setCasesPage] = useState(1);
   const [casesPageSize, setCasesPageSize] = useState(DEFAULT_CASES_PAGE_SIZE);
   const [casesTotal, setCasesTotal] = useState(0);
   const [casesLoading, setCasesLoading] = useState(false);
-
-  const tableRows = useMemo(
-    () => deriveTableRows(run.testplan),
-    [run.testplan],
-  );
 
   const totalCasePages = useMemo(() => {
     if (!casesTotal) return 1;
@@ -246,6 +303,21 @@ export default function GeneratorPage({
     if (!tableRows.length) return null;
     return tableRows.find((row) => row.id === selectedCaseId) || null;
   }, [tableRows, selectedCaseId]);
+
+  const virtualRows = useMemo(() => tableRows, [tableRows]);
+
+  const virtualItemData = useMemo(
+    () => ({
+      rows: virtualRows,
+      selectedCaseId,
+      isPreviewOpen,
+      onSelect: (id) => {
+        setSelectedCaseId(id);
+        setIsPreviewOpen(true);
+      },
+    }),
+    [virtualRows, selectedCaseId, isPreviewOpen],
+  );
 
   const selectedCount = (selection.selected_endpoint_ids || []).length;
   const runningStepLabel =
@@ -293,6 +365,7 @@ export default function GeneratorPage({
       setCasesPage(1);
       setSelectedCaseId("");
       setIsPreviewOpen(false);
+      setTableRows([]);
     }
   }, [activeSection, run?.run_id]);
 
@@ -378,7 +451,10 @@ export default function GeneratorPage({
           casesPageSize,
         );
 
-        const cases = data.cases || [];
+        const cases = (data.cases || []).map((c) => ({
+          ...c,
+          test_data_summary: summarizeTestData(c.test_data),
+        }));
         setCasesTotal(data.total_cases || 0);
 
         const uniqueEndpointCount = new Set(
@@ -388,50 +464,33 @@ export default function GeneratorPage({
           ),
         ).size;
 
-        const reconstructedTestplan = {
-          project: {
-            project_id: resolvedProjectId || "",
-            project_name: resolvedProjectId || "Project",
-            env: resolvedOptions.env || "staging",
-          },
-          generation: {
-            generated_at: new Date().toISOString(),
-            model: "deterministic",
-            source: "paged_run_cases",
-          },
-          suites: [
-            {
-              suite_id: "paged_cases",
-              name: "Generated Test Cases",
-              endpoints: [],
-              cases,
+        setTableRows(cases);
+
+        setRun((prev) => {
+          const nextRun = {
+            ...prev,
+            report: {
+              ...(prev.report || {}),
+              total_cases: data.total_cases || prev.report?.total_cases || 0,
+              needs_review:
+                prev.report?.needs_review ??
+                cases.filter((c) => !!c.needs_review).length,
+              endpoint_count:
+                prev.report?.endpoint_count ??
+                prev.eligible_endpoints?.length ??
+                uniqueEndpointCount,
             },
-          ],
-        };
+          };
 
-        const nextRun = {
-          ...run,
-          testplan: reconstructedTestplan,
-          report: {
-            ...(run.report || {}),
-            total_cases: data.total_cases || run.report?.total_cases || 0,
-            needs_review:
-              run.report?.needs_review ??
-              cases.filter((c) => !!c.needs_review).length,
-            endpoint_count:
-              run.report?.endpoint_count ??
-              run.eligible_endpoints?.length ??
-              uniqueEndpointCount,
-          },
-        };
+          if (onSaveGeneratedRun) {
+            onSaveGeneratedRun(nextRun);
+          }
 
-        setRun(nextRun);
-
-        if (onSaveGeneratedRun) {
-          onSaveGeneratedRun(nextRun);
-        }
+          return nextRun;
+        });
       } catch (e) {
         console.error("LOAD PAGED CASES ERROR:", e);
+        setTableRows([]);
         setRun((prev) => ({
           ...prev,
           error: {
@@ -602,8 +661,6 @@ export default function GeneratorPage({
         throw err;
       }
 
-      setActiveJobId(jobId);
-
       await new Promise((resolve, reject) => {
         const closeStream = streamJob(jobId, {
           onProgress: (job) => {
@@ -714,10 +771,10 @@ export default function GeneratorPage({
   }
 
   function exportJson() {
-    if (!run.testplan) return;
+    if (!tableRows.length) return;
     downloadText(
       `test_cases_page_${casesPage}.json`,
-      JSON.stringify(run.testplan, null, 2),
+      JSON.stringify(tableRows, null, 2),
       "application/json",
     );
   }
@@ -866,7 +923,7 @@ export default function GeneratorPage({
               <button
                 type="button"
                 onClick={exportJson}
-                disabled={!run.testplan || casesLoading}
+                disabled={!tableRows.length || casesLoading}
                 style={styles.secondaryBtn}
               >
                 Export JSON
@@ -898,7 +955,7 @@ export default function GeneratorPage({
                   Fetching page {casesPage} of generated cases.
                 </div>
               </div>
-            ) : !run.testplan || !tableRows.length ? (
+            ) : !tableRows.length ? (
               <div style={styles.emptyState}>
                 <div style={styles.emptyStateTitle}>
                   No generated test cases yet
@@ -916,7 +973,7 @@ export default function GeneratorPage({
                       ...run.report,
                       total_cases: casesTotal || run.report?.total_cases || 0,
                     }}
-                    testplan={run.testplan}
+                    testplan={null}
                   />
                 </div>
 
@@ -979,72 +1036,79 @@ export default function GeneratorPage({
                       </div>
                     </div>
 
-                    <div style={styles.tableWrap}>
-                      <table style={styles.table}>
-                        <thead>
-                          <tr>
-                            <th style={{ ...styles.th, width: 240 }}>ID</th>
-                            <th style={styles.th}>Title</th>
-                            <th style={{ ...styles.th, width: 110 }}>Type</th>
-                            <th style={{ ...styles.th, width: 130 }}>
-                              Priority
-                            </th>
-                            <th style={{ ...styles.th, width: 240 }}>API</th>
-                            <th style={{ ...styles.th, width: 100 }}>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tableRows.map((row) => {
-                            const isActive = selectedCase?.id === row.id;
+                    <div style={styles.virtualTableWrap}>
+                      <div style={styles.virtualHeader}>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 300,
+                            minWidth: 300,
+                            maxWidth: 300,
+                          }}
+                        >
+                          ID
+                        </div>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 420,
+                            minWidth: 420,
+                            maxWidth: 420,
+                          }}
+                        >
+                          Title
+                        </div>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 130,
+                            minWidth: 130,
+                            maxWidth: 130,
+                          }}
+                        >
+                          Type
+                        </div>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 120,
+                            minWidth: 120,
+                            maxWidth: 120,
+                          }}
+                        >
+                          Priority
+                        </div>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 250,
+                            minWidth: 250,
+                            maxWidth: 250,
+                          }}
+                        >
+                          API
+                        </div>
+                        <div
+                          style={{
+                            ...styles.virtualHeaderCell,
+                            width: 110,
+                            minWidth: 110,
+                            maxWidth: 110,
+                          }}
+                        >
+                          Action
+                        </div>
+                      </div>
 
-                            return (
-                              <tr
-                                key={
-                                  row.id ||
-                                  `${row.suite_id}-${row.ref?.caseIndex}`
-                                }
-                                style={isActive ? styles.trActive : undefined}
-                              >
-                                <td style={styles.tdMono}>{row.id || "-"}</td>
-                                <td
-                                  style={styles.tdTitle}
-                                  title={row.title || "-"}
-                                >
-                                  {row.title || "-"}
-                                </td>
-                                <td style={styles.td}>
-                                  {row.test_type || "-"}
-                                </td>
-                                <td style={styles.td}>{row.priority || "-"}</td>
-                                <td
-                                  style={styles.tdApi}
-                                  title={
-                                    getEndpointDisplay(row.api_details).summary
-                                  }
-                                >
-                                  {getEndpointDisplay(row.api_details).summary}
-                                </td>
-                                <td style={{ ...styles.td, width: 100 }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedCaseId(row.id);
-                                      setIsPreviewOpen(true);
-                                    }}
-                                    style={
-                                      isActive && isPreviewOpen
-                                        ? styles.viewBtnActive
-                                        : styles.viewBtn
-                                    }
-                                  >
-                                    View
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                      <List
+                        height={560}
+                        rowCount={virtualRows.length}
+                        rowHeight={52}
+                        width="100%"
+                        rowComponent={VirtualCaseRow}
+                        rowProps={virtualItemData}
+                        overscanCount={8}
+                      ></List>
                     </div>
                   </div>
                 </div>
@@ -1537,6 +1601,104 @@ const styles = {
     marginTop: 4,
     fontSize: 12,
     color: "#64748b",
+  },
+
+  virtualTableWrap: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    overflow: "hidden",
+    background: "#ffffff",
+  },
+
+  virtualHeader: {
+    display: "flex",
+    alignItems: "center",
+    padding: "0 14px",
+    minHeight: 48,
+    background: "#f8fafc",
+    borderBottom: "1px solid #e5e7eb",
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+  },
+
+  virtualHeaderCell: {
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    minWidth: 0,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "#475569",
+  },
+
+  virtualRow: {
+    display: "flex",
+    alignItems: "center",
+    padding: "0 14px",
+    borderBottom: "1px solid #f1f5f9",
+    background: "#ffffff",
+    boxSizing: "border-box",
+  },
+
+  virtualRowActive: {
+    background: "#eff6ff",
+  },
+
+  virtualCell: {
+    fontSize: 13,
+    color: "#0f172a",
+    paddingRight: 12,
+    boxSizing: "border-box",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+  },
+
+  virtualCellMono: {
+    fontSize: 12,
+    color: "#334155",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    paddingRight: 12,
+    boxSizing: "border-box",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+  },
+
+  virtualCellTitle: {
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    minWidth: 0,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#0f172a",
+  },
+
+  virtualCellApi: {
+    fontSize: 12,
+    color: "#334155",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    paddingRight: 12,
+    boxSizing: "border-box",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+  },
+
+  virtualCellAction: {
+    display: "flex",
+    justifyContent: "flex-start",
+    alignItems: "center",
   },
 
   explorerBody: {

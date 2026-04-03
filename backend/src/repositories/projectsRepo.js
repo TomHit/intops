@@ -4,7 +4,11 @@ export async function createProjectRecord({
   projectId,
   orgId,
   name,
-  specSource,
+  description = "",
+  specSourceType = "url",
+  specSource = "",
+  specFormat = "auto",
+  docsStatus = "missing",
 }) {
   const result = await pool.query(
     `
@@ -12,16 +16,55 @@ export async function createProjectRecord({
         project_id,
         org_id,
         name,
+        description,
+        spec_source_type,
         spec_source,
+        spec_format,
+        docs_status,
         generation_status
       )
-      VALUES ($1, $2, $3, $4, 'idle')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'idle')
       RETURNING *
     `,
-    [projectId, orgId, name, specSource || null],
+    [
+      projectId,
+      orgId,
+      name,
+      description || "",
+      specSourceType || "url",
+      specSource || null,
+      specFormat || "auto",
+      docsStatus || "missing",
+    ],
   );
 
   return result.rows[0] || null;
+}
+
+export async function listProjectsByOrg(orgId) {
+  const result = await pool.query(
+    `
+      SELECT *
+      FROM projects
+      WHERE org_id = $1
+      ORDER BY name ASC
+    `,
+    [orgId],
+  );
+
+  return result.rows || [];
+}
+
+export async function listAllProjects() {
+  const result = await pool.query(
+    `
+      SELECT *
+      FROM projects
+      ORDER BY name ASC
+    `,
+  );
+
+  return result.rows || [];
 }
 
 export async function setProjectCurrentRun(projectId, runId) {
@@ -36,7 +79,7 @@ export async function setProjectCurrentRun(projectId, runId) {
   `;
 
   const result = await pool.query(query, [projectId, runId]);
-  return result.rows[0];
+  return result.rows[0] || null;
 }
 
 export async function setProjectGenerationStatus(projectId, status) {

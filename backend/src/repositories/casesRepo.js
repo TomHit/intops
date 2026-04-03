@@ -60,7 +60,7 @@ async function insertGeneratedCasesChunk(client, caseRows) {
       payload
     )
     VALUES ${placeholders.join(",")}
-    ON CONFLICT (case_id) DO NOTHING
+    ON CONFLICT (run_id, case_id) DO NOTHING
     RETURNING case_id
   `;
 

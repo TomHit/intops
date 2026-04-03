@@ -12,7 +12,7 @@ import {
 import { pool, testDbConnection } from "./src/db/postgres.js";
 import { createJob, getJob, listJobs } from "./src/jobs/jobStore.js";
 import { subscribeJob } from "./src/jobs/jobEvents.js";
-import { runGenerationJob } from "./src/jobs/generationWorker.js";
+
 import { validateSpecQuality } from "./src/services/specQualityValidator.js";
 
 import { createGenerationRun } from "./src/repositories/runsRepo.js";
@@ -20,7 +20,10 @@ import { getCasesByRunPaginated } from "./src/repositories/casesRepo.js";
 import {
   createProjectRecord,
   getProjectById,
+  listAllProjects,
 } from "./src/repositories/projectsRepo.js";
+import { enqueueGenerationJob } from "./src/jobs/generationQueue.js";
+import "./src/workers/generationWorkerProcess.js";
 
 process.on("uncaughtException", (err) =>
   console.error("UNCAUGHT EXCEPTION:", err),
@@ -228,7 +231,23 @@ app.post("/api/auth/org-login", async (req, res) => {
 // Projects list from disk
 app.get("/api/projects", async (_req, res) => {
   try {
-    const projects = await loadAllProjects();
+    const rows = await listAllProjects();
+
+    const projects = rows.map((p) => ({
+      project_id: p.project_id,
+      org_id: p.org_id,
+      project_name: p.name,
+      env_count: p.env_count ?? 1,
+      docs_status: p.docs_status || "missing",
+      description: p.description || "",
+      spec_source_type: p.spec_source_type || "url",
+      spec_source: p.spec_source || "",
+      spec_format: p.spec_format || "auto",
+      last_generated_at: p.last_generated_at || null,
+      current_run_id: p.current_run_id || null,
+      generation_status: p.generation_status || "idle",
+    }));
+
     res.json(projects);
   } catch (e) {
     console.error("PROJECTS ERROR:", e);
@@ -239,8 +258,6 @@ app.get("/api/projects", async (_req, res) => {
 // Create new project
 app.post("/api/projects", async (req, res) => {
   try {
-    await ensureProjectsDir();
-
     const body = req.body || {};
     const projectName = String(body.project_name || "").trim();
     const orgId = String(body.org_id || "").trim();
@@ -254,48 +271,39 @@ app.post("/api/projects", async (req, res) => {
     }
 
     const projectId = `proj_${Date.now()}`;
-    const projectDir = path.join(PROJECTS_DIR, projectId);
-
-    await fs.mkdir(projectDir, { recursive: true });
 
     const envCount = Number(body.env_count) || 1;
     const description = String(body.description || "").trim();
     const specSourceType = String(body.spec_source_type || "url").trim();
     const specSource = String(body.spec_source || "").trim();
     const specFormat = String(body.spec_format || "auto").trim();
+    const docsStatus = specSource ? "ok" : "missing";
 
-    const projectConfig = {
-      project_id: projectId,
-      org_id: orgId,
-      project_name: projectName,
-      env_count: envCount,
-      description,
-      docs_status: specSource ? "ok" : "missing",
-      spec_source_type: specSourceType,
-      spec_source: specSource,
-      spec_format: specFormat,
-      last_generated_at: null,
-      openapi: {
-        mode: specSourceType === "file" ? "file" : "url",
-        value: specSource,
-        format: specFormat,
-      },
-    };
-
-    await fs.writeFile(
-      path.join(projectDir, "project.json"),
-      JSON.stringify(projectConfig, null, 2),
-      "utf-8",
-    );
-
-    await createProjectRecord({
+    const created = await createProjectRecord({
       projectId,
       orgId,
       name: projectName,
+      description,
+      specSourceType,
       specSource,
+      specFormat,
+      docsStatus,
     });
 
-    res.status(201).json(projectConfig);
+    return res.status(201).json({
+      project_id: created.project_id,
+      org_id: created.org_id,
+      project_name: created.name,
+      env_count: envCount,
+      description: created.description || "",
+      docs_status: created.docs_status || docsStatus,
+      spec_source_type: created.spec_source_type || specSourceType,
+      spec_source: created.spec_source || specSource,
+      spec_format: created.spec_format || specFormat,
+      last_generated_at: created.last_generated_at || null,
+      current_run_id: created.current_run_id || null,
+      generation_status: created.generation_status || "idle",
+    });
   } catch (e) {
     console.error("PROJECT CREATE ERROR:", e);
     res.status(500).json({ message: e?.message || String(e) });
@@ -404,18 +412,19 @@ app.post("/api/generate", async (req, res) => {
       endpointCount: endpoints.length,
     });
 
-    const job = createJob({
+    const job = await createJob({
       type: "generate_test_plan",
       request_summary: summarizeGenerateRequest(payload),
-      meta: { run_id: run.run_id }, // 👈 link job ↔ run
+      meta: { run_id: run.run_id, project_id: projectId },
     });
 
-    setImmediate(() => {
-      runGenerationJob(job.job_id, {
+    await enqueueGenerationJob({
+      job_id: job.job_id,
+      request_body: {
         ...payload,
         created_by: createdBy,
         run_id: run.run_id,
-      });
+      },
     });
 
     return res.status(202).json({
@@ -432,10 +441,48 @@ app.post("/api/generate", async (req, res) => {
     });
   }
 });
-// Job status
-app.get("/api/jobs/:jobId", (req, res) => {
+
+app.get("/api/jobs/:jobId/progress", async (req, res) => {
   try {
-    const job = getJob(req.params.jobId);
+    const job = await getJob(req.params.jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        ok: false,
+        message: "Job not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      job_id: job.job_id,
+      status: job.status,
+      progress: job.progress || {
+        progress_current: 0,
+        progress_total: 0,
+        percent: 0,
+        processed_batches: 0,
+        total_batches: 0,
+        inserted_cases: 0,
+        needs_review: 0,
+        endpoint_count: 0,
+        message: job.status === "queued" ? "Queued" : "",
+      },
+      error: job.error || null,
+      has_result: !!job.result,
+    });
+  } catch (e) {
+    console.error("JOB PROGRESS ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      message: e?.message || String(e),
+    });
+  }
+});
+// Job status
+app.get("/api/jobs/:jobId", async (req, res) => {
+  try {
+    const job = await getJob(req.params.jobId);
 
     if (!job) {
       return res.status(404).json({
@@ -467,14 +514,14 @@ app.get("/api/jobs/:jobId", (req, res) => {
   }
 });
 
-app.get("/api/jobs/:jobId/events", (req, res) => {
+app.get("/api/jobs/:jobId/events", async (req, res) => {
   try {
     const jobId = String(req.params.jobId || "").trim();
     if (!jobId) {
       return res.status(400).json({ ok: false, message: "jobId is required" });
     }
 
-    const job = getJob(jobId);
+    const job = await getJob(jobId);
     if (!job) {
       return res.status(404).json({ ok: false, message: "Job not found" });
     }
@@ -536,9 +583,9 @@ app.get("/api/jobs/:jobId/events", (req, res) => {
 });
 
 // Job result
-app.get("/api/jobs/:jobId/result", (req, res) => {
+app.get("/api/jobs/:jobId/result", async (req, res) => {
   try {
-    const job = getJob(req.params.jobId);
+    const job = await getJob(req.params.jobId);
 
     if (!job) {
       return res.status(404).json({
@@ -571,9 +618,11 @@ app.get("/api/jobs/:jobId/result", (req, res) => {
 });
 
 // List jobs
-app.get("/api/jobs", (_req, res) => {
+app.get("/api/jobs", async (_req, res) => {
   try {
-    const jobs = listJobs().map((job) => ({
+    const jobsRaw = await listJobs();
+
+    const jobs = jobsRaw.map((job) => ({
       job_id: job.job_id,
       status: job.status,
       created_at: job.created_at,

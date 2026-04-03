@@ -1,6 +1,5 @@
-import fs from "fs/promises";
-import path from "path";
 import yaml from "js-yaml";
+import { getProjectById } from "../repositories/projectsRepo.js";
 
 function isHttpUrl(s) {
   return (
@@ -54,6 +53,7 @@ function parseMaybeYaml(text, filename = "") {
 
   return parsed;
 }
+
 async function fetchSpecFromCandidates(inputUrl) {
   const candidateUrls = buildCandidateSpecUrls(inputUrl);
 
@@ -121,13 +121,6 @@ function normalizeProjectConfig(cfg = {}, projectId = "") {
   };
 }
 
-export async function loadProjectConfig(projectId) {
-  const p = path.join(process.cwd(), "projects", projectId, "project.json");
-  const raw = await fs.readFile(p, "utf-8");
-  const parsed = JSON.parse(raw);
-  return normalizeProjectConfig(parsed, projectId);
-}
-
 export async function loadOpenApiDoc(projectId, opts = {}) {
   const override = String(opts?.specSourceOverride || "").trim();
 
@@ -154,7 +147,20 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
     };
   }
 
-  const cfg = await loadProjectConfig(projectId);
+  const project = await getProjectById(projectId);
+
+  if (!project) {
+    throw new Error("Project not found");
+  }
+
+  const cfg = normalizeProjectConfig({
+    project_id: project.project_id,
+    project_name: project.name,
+    spec_source_type: project.spec_source_type,
+    spec_source: project.spec_source,
+    spec_format: project.spec_format,
+  });
+
   const specSource = String(cfg.spec_source || "").trim();
   const specSourceType = String(cfg.spec_source_type || "url").trim();
 
@@ -183,11 +189,5 @@ export async function loadOpenApiDoc(projectId, opts = {}) {
     };
   }
 
-  const full = path.join(process.cwd(), "projects", projectId, specSource);
-  const text = await fs.readFile(full, "utf-8");
-
-  return {
-    cfg,
-    doc: parseMaybeYaml(text, full),
-  };
+  throw new Error("Filesystem-based specs are no longer supported");
 }

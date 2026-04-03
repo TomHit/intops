@@ -1,16 +1,27 @@
 import { emitJobEvent } from "./jobEvents.js";
+import { redis } from "../lib/redis.js";
 
-const jobs = new Map();
+const JOB_KEY_PREFIX = "job";
 
 function nowIso() {
   return new Date().toISOString();
 }
 
-function cloneJob(job) {
-  return job ? { ...job } : null;
+function jobKey(jobId) {
+  return `${JOB_KEY_PREFIX}:${jobId}`;
 }
 
-export function createJob(meta = {}) {
+async function saveJob(job) {
+  await redis.set(jobKey(job.job_id), JSON.stringify(job));
+  return { ...job };
+}
+
+async function readJob(jobId) {
+  const raw = await redis.get(jobKey(jobId));
+  return raw ? JSON.parse(raw) : null;
+}
+
+export async function createJob(meta = {}) {
   const jobId =
     "job_" +
     Date.now().toString(36) +
@@ -30,23 +41,22 @@ export function createJob(meta = {}) {
     progress: null,
   };
 
-  jobs.set(jobId, job);
+  await saveJob(job);
 
-  const snapshot = cloneJob(job);
   emitJobEvent(jobId, {
     type: "job_created",
-    job: snapshot,
+    job: { ...job },
   });
 
-  return snapshot;
+  return { ...job };
 }
 
-export function getJob(jobId) {
-  return cloneJob(jobs.get(jobId));
+export async function getJob(jobId) {
+  return await readJob(jobId);
 }
 
-export function updateJob(jobId, patch = {}) {
-  const existing = jobs.get(jobId);
+export async function updateJob(jobId, patch = {}) {
+  const existing = await readJob(jobId);
   if (!existing) return null;
 
   const updated = {
@@ -55,19 +65,27 @@ export function updateJob(jobId, patch = {}) {
     updated_at: nowIso(),
   };
 
-  jobs.set(jobId, updated);
+  await saveJob(updated);
 
-  const snapshot = cloneJob(updated);
   emitJobEvent(jobId, {
     type: "job_updated",
-    job: snapshot,
+    job: { ...updated },
   });
 
-  return snapshot;
+  return { ...updated };
 }
 
-export function listJobs() {
-  return Array.from(jobs.values())
+export async function listJobs(limit = 100) {
+  const keys = await redis.keys(`${JOB_KEY_PREFIX}:*`);
+  const rows = [];
+
+  for (const key of keys) {
+    const raw = await redis.get(key);
+    if (!raw) continue;
+    rows.push(JSON.parse(raw));
+  }
+
+  return rows
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .map((job) => ({ ...job }));
+    .slice(0, limit);
 }
