@@ -182,7 +182,14 @@ export default function WorkspacePlaceholderPage() {
   }
 
   return (
-    <div className="app-shell premium-shell">
+    <div
+      className="app-shell premium-shell"
+      style={{
+        display: "flex",
+        minHeight: "100vh",
+        width: "100%",
+      }}
+    >
       <Sidebar
         activeNav={activeNav}
         onChange={handleSidebarChange}
@@ -190,12 +197,27 @@ export default function WorkspacePlaceholderPage() {
         organization={organization}
       />
 
-      <main className="app-main premium-main" style={{ paddingTop: 12 }}>
-        {/* HEADER */}
-
-        {/* CONTENT */}
-
-        <div className="workspace-content" style={{ paddingTop: 0 }}>
+      <main
+        className="app-main premium-main"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          paddingTop: 12,
+          overflowX: "hidden",
+        }}
+      >
+        <div
+          className="workspace-content"
+          style={{
+            paddingTop: 0,
+            paddingLeft: 24,
+            paddingRight: 24,
+            width: "100%",
+            minWidth: 0,
+            overflowX: "hidden",
+            boxSizing: "border-box",
+          }}
+        >
           {renderContent()}
         </div>
       </main>

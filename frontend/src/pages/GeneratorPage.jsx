@@ -23,7 +23,12 @@ const DEFAULT_OPTIONS = {
   guidance: "",
 };
 
+const VIRTUAL_ROW_HEIGHT = 64;
+const VIRTUAL_TABLE_HEIGHT = 560;
 const DEFAULT_CASES_PAGE_SIZE = 100;
+const VIRTUAL_TABLE_WIDTH = 980;
+const TABLE_GRID =
+  "280px minmax(520px, 1fr) 140px 120px minmax(260px, 1fr) 120px";
 
 function safeJsonParse(text) {
   try {
@@ -133,14 +138,21 @@ function getEndpointDisplay(apiDetails = {}) {
     summary: `${method} ${path}`.trim(),
   };
 }
-
 const VirtualCaseRow = React.memo(function VirtualCaseRow(props) {
-  const { index, style, rows, selectedCaseId, isPreviewOpen, onSelect } = props;
+  const {
+    index,
+    style,
+    rows = [],
+    selectedCaseId = "",
+    isPreviewOpen = false,
+    onSelect,
+  } = props || {};
 
-  const row = rows?.[index];
+  const row = Array.isArray(rows) ? rows[index] : null;
   if (!row) return null;
 
   const isActive = selectedCaseId === row.id;
+  const endpoint = getEndpointDisplay(row.api_details);
 
   return (
     <div
@@ -150,74 +162,27 @@ const VirtualCaseRow = React.memo(function VirtualCaseRow(props) {
         ...(isActive ? styles.virtualRowActive : {}),
       }}
     >
-      <div
-        style={{
-          ...styles.virtualCellMono,
-          width: 300,
-          minWidth: 300,
-          maxWidth: 300,
-        }}
-      >
+      <div style={styles.virtualCellMono} title={row.id || "-"}>
         {row.id || "-"}
       </div>
 
-      <div
-        style={{
-          ...styles.virtualCellTitle,
-          width: 420,
-          minWidth: 420,
-          maxWidth: 420,
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          textOverflow: "ellipsis",
-        }}
-        title={row.title || "-"}
-      >
+      <div style={styles.virtualCellTitle} title={row.title || "-"}>
         {row.title || "-"}
       </div>
 
-      <div
-        style={{
-          ...styles.virtualCell,
-          width: 130,
-          minWidth: 130,
-          maxWidth: 130,
-        }}
-      >
+      <div style={styles.virtualCell} title={row.test_type || "-"}>
         {row.test_type || "-"}
       </div>
 
-      <div
-        style={{
-          ...styles.virtualCell,
-          width: 120,
-          minWidth: 120,
-          maxWidth: 120,
-        }}
-      >
+      <div style={styles.virtualCell} title={row.priority || "-"}>
         {row.priority || "-"}
       </div>
 
-      <div
-        style={{
-          ...styles.virtualCellApi,
-          width: 250,
-          minWidth: 250,
-          maxWidth: 250,
-        }}
-        title={getEndpointDisplay(row.api_details).summary}
-      >
-        {getEndpointDisplay(row.api_details).summary}
+      <div style={styles.virtualCellApi} title={endpoint.summary || "-"}>
+        {endpoint.summary || "-"}
       </div>
 
-      <div
-        style={{
-          ...styles.virtualCellAction,
-          width: 110,
-          minWidth: 110,
-          maxWidth: 110,
-        }}
-      >
+      <div style={styles.virtualCellAction}>
         <button
           type="button"
           onClick={() => onSelect?.(row.id)}
@@ -308,9 +273,9 @@ export default function GeneratorPage({
 
   const virtualItemData = useMemo(
     () => ({
-      rows: virtualRows,
-      selectedCaseId,
-      isPreviewOpen,
+      rows: Array.isArray(virtualRows) ? virtualRows : [],
+      selectedCaseId: selectedCaseId || "",
+      isPreviewOpen: !!isPreviewOpen,
       onSelect: (id) => {
         setSelectedCaseId(id);
         setIsPreviewOpen(true);
@@ -786,6 +751,398 @@ export default function GeneratorPage({
   }
 
   const isTestCasesSection = activeSection === "testCases";
+  if (isTestCasesSection) {
+    return renderTestCasesSection();
+  }
+
+  function renderTestCasesSection() {
+    return (
+      <div style={styles.testCasesPage}>
+        <section style={styles.testCasesWrap}>
+          <div style={styles.resultsHeader}>
+            <div>
+              <div style={styles.panelTitle}>Test Cases</div>
+              <div style={styles.panelSubtle}>
+                Review generated cases for the selected project and export them.
+              </div>
+            </div>
+
+            <div style={styles.resultsTopActions}>
+              <button
+                type="button"
+                onClick={exportJson}
+                disabled={!tableRows.length || casesLoading}
+                style={styles.secondaryBtn}
+              >
+                Export JSON
+              </button>
+
+              <button
+                type="button"
+                onClick={exportCsv}
+                disabled={!tableRows.length || casesLoading}
+                style={styles.secondaryBtn}
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.resultsInner}>
+            {!resolvedProjectId ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>No project selected</div>
+                <div style={styles.emptyStateText}>
+                  Open a project from the Projects tab first.
+                </div>
+              </div>
+            ) : casesLoading ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>Loading test cases...</div>
+                <div style={styles.emptyStateText}>
+                  Fetching page {casesPage} of generated cases.
+                </div>
+              </div>
+            ) : !tableRows.length ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyStateTitle}>
+                  No generated test cases yet
+                </div>
+                <div style={styles.emptyStateText}>
+                  Go to Generate Tests, select endpoints, and run generation.
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={styles.resultsSummaryWrap}>
+                  <ResultsSummary
+                    rows={tableRows}
+                    report={{
+                      ...run.report,
+                      total_cases: casesTotal || run.report?.total_cases || 0,
+                    }}
+                    testplan={null}
+                  />
+                </div>
+
+                <div style={styles.paginationBar}>
+                  <div style={styles.paginationMeta}>
+                    Page {casesPage} of {totalCasePages} • Total cases:{" "}
+                    {casesTotal}
+                  </div>
+
+                  <div style={styles.paginationControls}>
+                    <select
+                      value={casesPageSize}
+                      onChange={(e) => {
+                        setCasesPageSize(Number(e.target.value) || 100);
+                        setCasesPage(1);
+                      }}
+                      style={styles.pageSizeSelect}
+                    >
+                      <option value={50}>50 / page</option>
+                      <option value={100}>100 / page</option>
+                      <option value={200}>200 / page</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => setCasesPage((p) => Math.max(1, p - 1))}
+                      disabled={casesPage <= 1 || casesLoading}
+                      style={styles.secondaryBtn}
+                    >
+                      Previous
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCasesPage((p) => Math.min(totalCasePages, p + 1))
+                      }
+                      disabled={casesPage >= totalCasePages || casesLoading}
+                      style={styles.secondaryBtn}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    ...styles.tableOnlyWrap,
+                    ...(isPreviewOpen ? styles.tableOnlyWrapBlurred : {}),
+                  }}
+                >
+                  <div style={styles.tablePane}>
+                    <div style={styles.tablePaneHead}>
+                      <div style={styles.tablePaneTitle}>
+                        Generated Test Cases
+                      </div>
+                      <div style={styles.tablePaneMeta}>
+                        Showing {tableRows.length} row
+                        {tableRows.length === 1 ? "" : "s"} on this page
+                      </div>
+                    </div>
+
+                    <div style={styles.virtualOuterScroll}>
+                      <div style={styles.virtualTableWrap}>
+                        <div style={styles.virtualHeader}>
+                          <div style={styles.virtualHeaderCell}>ID</div>
+                          <div style={styles.virtualHeaderCell}>Title</div>
+                          <div style={styles.virtualHeaderCell}>Type</div>
+                          <div style={styles.virtualHeaderCell}>Priority</div>
+                          <div style={styles.virtualHeaderCell}>API</div>
+                          <div style={styles.virtualHeaderCell}>Action</div>
+                        </div>
+
+                        <List
+                          height={VIRTUAL_TABLE_HEIGHT}
+                          width={"100%"}
+                          rowCount={virtualRows.length}
+                          rowHeight={VIRTUAL_ROW_HEIGHT}
+                          rowComponent={VirtualCaseRow}
+                          rowProps={virtualItemData}
+                          overscanCount={8}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {isPreviewOpen && selectedCase ? (
+                  <>
+                    <div
+                      style={styles.previewOverlay}
+                      onClick={() => setIsPreviewOpen(false)}
+                    />
+
+                    <aside
+                      className="preview-drawer"
+                      style={styles.previewDrawer}
+                    >
+                      <div style={styles.previewHead}>
+                        <div>
+                          <div style={styles.previewTitle}>
+                            Test Case Preview
+                          </div>
+                          <div style={styles.previewSubtle}>
+                            Detailed view for selected test case
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsPreviewOpen(false)}
+                          style={styles.previewCloseBtn}
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div style={styles.previewBody}>
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewCaseTitle}>
+                            {selectedCase.title || "Untitled Test Case"}
+                          </div>
+                          <div style={styles.previewMeta}>
+                            {selectedCase.id || "-"} •{" "}
+                            {selectedCase.test_type || "-"} •{" "}
+                            {selectedCase.priority || "-"}
+                          </div>
+                        </div>
+
+                        <div style={styles.previewGrid}>
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>Module</div>
+                            <div style={styles.previewMiniValue}>
+                              {selectedCase.module || "-"}
+                            </div>
+                          </div>
+
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>API</div>
+                            <div style={styles.previewMiniValueMono}>
+                              {
+                                getEndpointDisplay(selectedCase.api_details)
+                                  .summary
+                              }
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Full Endpoint</div>
+                          {(() => {
+                            const ep = getEndpointDisplay(
+                              selectedCase.api_details,
+                            );
+
+                            return (
+                              <>
+                                <pre style={styles.previewCodeBlockLight}>
+                                  {ep.resolved || "Not available"}
+                                </pre>
+
+                                {!ep.hasBaseUrl && (
+                                  <div style={styles.endpointWarning}>
+                                    ⚠ {ep.warning}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        <div style={styles.previewGrid}>
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>Base URL</div>
+                            <div style={styles.previewMiniValueMono}>
+                              {getEndpointDisplay(selectedCase.api_details)
+                                .baseUrl || "-"}
+                            </div>
+                          </div>
+
+                          <div style={styles.previewMiniCard}>
+                            <div style={styles.previewMiniLabel}>Path</div>
+                            <div style={styles.previewMiniValueMono}>
+                              {getEndpointDisplay(selectedCase.api_details)
+                                .path || "-"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Preconditions</div>
+                          <DetailList items={selectedCase.preconditions} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Steps</div>
+                          <DetailList items={selectedCase.steps} ordered />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Expected Results
+                          </div>
+                          <DetailList items={selectedCase.expected_results} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Validation Focus
+                          </div>
+                          <DetailList items={selectedCase.validation_focus} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>References</div>
+                          <DetailList items={selectedCase.references} />
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>
+                            Test Data Summary
+                          </div>
+                          <div style={styles.previewText}>
+                            {selectedCase.test_data_summary || "-"}
+                          </div>
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Path Params</div>
+                          {selectedCase.test_data?.path_params &&
+                          Object.keys(selectedCase.test_data.path_params)
+                            .length > 0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.path_params)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Query Params</div>
+                          {selectedCase.test_data?.query_params &&
+                          Object.keys(selectedCase.test_data.query_params)
+                            .length > 0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.query_params)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Headers</div>
+                          {selectedCase.test_data?.headers &&
+                          Object.keys(selectedCase.test_data.headers).length >
+                            0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.headers)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Cookies</div>
+                          {selectedCase.test_data?.cookies &&
+                          Object.keys(selectedCase.test_data.cookies).length >
+                            0 ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.cookies)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Request Body</div>
+                          {selectedCase.test_data?.request_body !== undefined &&
+                          selectedCase.test_data?.request_body !== null &&
+                          (typeof selectedCase.test_data.request_body !==
+                            "object" ||
+                            Object.keys(
+                              selectedCase.test_data.request_body || {},
+                            ).length > 0) ? (
+                            <pre style={styles.previewCodeBlock}>
+                              {prettyJson(selectedCase.test_data.request_body)}
+                            </pre>
+                          ) : (
+                            <div style={styles.detailMuted}>-</div>
+                          )}
+                        </div>
+
+                        <div style={styles.previewSection}>
+                          <div style={styles.previewLabel}>Objective</div>
+                          <div style={styles.previewText}>
+                            {selectedCase.objective || "-"}
+                          </div>
+                        </div>
+
+                        {selectedCase.review_notes ? (
+                          <div style={styles.previewSection}>
+                            <div style={styles.previewLabel}>Review Notes</div>
+                            <div style={styles.previewText}>
+                              {selectedCase.review_notes}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </aside>
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.page}>
@@ -1036,79 +1393,27 @@ export default function GeneratorPage({
                       </div>
                     </div>
 
-                    <div style={styles.virtualTableWrap}>
-                      <div style={styles.virtualHeader}>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 300,
-                            minWidth: 300,
-                            maxWidth: 300,
-                          }}
-                        >
-                          ID
+                    <div style={styles.virtualOuterScroll}>
+                      <div style={styles.virtualTableWrap}>
+                        <div style={styles.virtualHeader}>
+                          <div style={styles.virtualHeaderCell}>ID</div>
+                          <div style={styles.virtualHeaderCell}>Title</div>
+                          <div style={styles.virtualHeaderCell}>Type</div>
+                          <div style={styles.virtualHeaderCell}>Priority</div>
+                          <div style={styles.virtualHeaderCell}>API</div>
+                          <div style={styles.virtualHeaderCell}>Action</div>
                         </div>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 420,
-                            minWidth: 420,
-                            maxWidth: 420,
-                          }}
-                        >
-                          Title
-                        </div>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 130,
-                            minWidth: 130,
-                            maxWidth: 130,
-                          }}
-                        >
-                          Type
-                        </div>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 120,
-                            minWidth: 120,
-                            maxWidth: 120,
-                          }}
-                        >
-                          Priority
-                        </div>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 250,
-                            minWidth: 250,
-                            maxWidth: 250,
-                          }}
-                        >
-                          API
-                        </div>
-                        <div
-                          style={{
-                            ...styles.virtualHeaderCell,
-                            width: 110,
-                            minWidth: 110,
-                            maxWidth: 110,
-                          }}
-                        >
-                          Action
-                        </div>
-                      </div>
 
-                      <List
-                        height={560}
-                        rowCount={virtualRows.length}
-                        rowHeight={52}
-                        width="100%"
-                        rowComponent={VirtualCaseRow}
-                        rowProps={virtualItemData}
-                        overscanCount={8}
-                      ></List>
+                        <List
+                          height={VIRTUAL_TABLE_HEIGHT}
+                          width={VIRTUAL_TABLE_WIDTH}
+                          rowCount={virtualRows.length}
+                          rowHeight={VIRTUAL_ROW_HEIGHT}
+                          rowComponent={VirtualCaseRow}
+                          rowProps={virtualItemData}
+                          overscanCount={8}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1308,7 +1613,12 @@ export default function GeneratorPage({
                         <div style={styles.previewSection}>
                           <div style={styles.previewLabel}>Request Body</div>
                           {selectedCase.test_data?.request_body !== undefined &&
-                          selectedCase.test_data?.request_body !== null ? (
+                          selectedCase.test_data?.request_body !== null &&
+                          (typeof selectedCase.test_data.request_body !==
+                            "object" ||
+                            Object.keys(
+                              selectedCase.test_data.request_body || {},
+                            ).length > 0) ? (
                             <pre style={styles.previewCodeBlock}>
                               {prettyJson(selectedCase.test_data.request_body)}
                             </pre>
@@ -1318,11 +1628,20 @@ export default function GeneratorPage({
                         </div>
 
                         <div style={styles.previewSection}>
-                          <div style={styles.previewLabel}>Review Notes</div>
+                          <div style={styles.previewLabel}>Objective</div>
                           <div style={styles.previewText}>
-                            {selectedCase.review_notes || "-"}
+                            {selectedCase.objective || "-"}
                           </div>
                         </div>
+
+                        {selectedCase.review_notes ? (
+                          <div style={styles.previewSection}>
+                            <div style={styles.previewLabel}>Review Notes</div>
+                            <div style={styles.previewText}>
+                              {selectedCase.review_notes}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </aside>
                   </>
@@ -1515,6 +1834,23 @@ const styles = {
     color: "#9a3412",
     fontSize: 14,
   },
+  testCasesPage: {
+    width: "100%",
+    minWidth: 0,
+    padding: 24,
+    boxSizing: "border-box",
+  },
+
+  resultsSummaryWrap: {
+    marginBottom: 18,
+  },
+
+  virtualOuterScroll: {
+    width: "100%",
+    overflowX: "auto",
+    overflowY: "hidden",
+    background: "#ffffff",
+  },
 
   topGenerateWrap: {
     padding: "10px 12px 0",
@@ -1593,99 +1929,89 @@ const styles = {
   },
 
   virtualTableWrap: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 18,
-    overflow: "hidden",
-    background: "#ffffff",
+    minWidth: 1440,
     width: "100%",
   },
 
   virtualHeader: {
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: TABLE_GRID,
     alignItems: "center",
-    padding: "0 18px",
-    minHeight: 54,
-    background: "#f8fafc",
-    borderBottom: "1px solid #e5e7eb",
-    position: "sticky",
-    top: 0,
-    zIndex: 2,
+    columnGap: 0,
+    padding: "0 24px",
+    minHeight: 72,
+    background: "#eef3fb",
+    borderBottom: "1px solid #d9e2f0",
   },
 
   virtualHeaderCell: {
-    display: "flex",
-    alignItems: "center",
     padding: "0 20px",
-    minWidth: 0,
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: 800,
     letterSpacing: "0.08em",
     textTransform: "uppercase",
-    color: "#475569",
+    color: "#355885",
+    whiteSpace: "nowrap",
   },
 
   virtualRow: {
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: TABLE_GRID,
     alignItems: "center",
-    padding: "0 18px",
-    borderBottom: "1px solid #f1f5f9",
+    minHeight: 64,
+    padding: "0 24px",
+    borderBottom: "1px solid #e7edf7",
     background: "#ffffff",
-    boxSizing: "border-box",
   },
 
   virtualRowActive: {
-    background: "#eff6ff",
+    background: "#f8fbff",
   },
 
   virtualCell: {
-    fontSize: 13,
-    color: "#0f172a",
-    paddingRight: 14,
-    boxSizing: "border-box",
-    overflow: "hidden",
+    padding: "0 20px",
+    fontSize: 16,
+    fontWeight: 600,
+    color: "#1f3a63",
     whiteSpace: "nowrap",
+    overflow: "hidden",
     textOverflow: "ellipsis",
   },
 
   virtualCellMono: {
-    fontSize: 12,
-    color: "#334155",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    paddingRight: 14,
-    boxSizing: "border-box",
-    overflow: "hidden",
+    padding: "0 20px",
+    fontSize: 15,
+    fontWeight: 700,
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    color: "#1f3a63",
     whiteSpace: "nowrap",
+    overflow: "hidden",
     textOverflow: "ellipsis",
   },
 
   virtualCellTitle: {
-    display: "flex",
-    alignItems: "center",
     padding: "0 20px",
-    minWidth: 0,
-    overflow: "hidden",
+    fontSize: 17,
+    fontWeight: 800,
+    color: "#102a56",
     whiteSpace: "nowrap",
+    overflow: "hidden",
     textOverflow: "ellipsis",
-    fontSize: 15,
-    fontWeight: 700,
-    color: "#0f172a",
   },
 
   virtualCellApi: {
-    fontSize: 12,
-    color: "#334155",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    paddingRight: 14,
-    boxSizing: "border-box",
-    overflow: "hidden",
+    padding: "0 20px",
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#486587",
     whiteSpace: "nowrap",
+    overflow: "hidden",
     textOverflow: "ellipsis",
   },
 
   virtualCellAction: {
+    padding: "0 20px",
     display: "flex",
     justifyContent: "flex-start",
     alignItems: "center",
@@ -1874,8 +2200,8 @@ const styles = {
   testCasesWrap: {
     display: "grid",
     gap: 18,
-    width: "calc(100vw - 56px)",
-    maxWidth: "none",
+    width: "100%",
+    maxWidth: "100%",
   },
   resultsInner: {
     display: "grid",
@@ -1932,40 +2258,38 @@ const styles = {
     fontWeight: 600,
   },
   tableOnlyWrap: {
-    minWidth: 0,
-    width: "100%",
-    transition: "filter 0.2s ease",
+    position: "relative",
+    transition: "filter 0.2s ease, opacity 0.2s ease",
   },
   tableOnlyWrapBlurred: {
     filter: "blur(2px)",
+    opacity: 0.72,
+    pointerEvents: "none",
   },
   tablePane: {
-    width: "100%",
-    maxWidth: "none",
-    borderRadius: 24,
-    border: "1px solid #e8eef6",
-    background: "#fff",
+    background: "#ffffff",
+    border: "1px solid #d9e2f0",
+    borderRadius: 28,
     overflow: "hidden",
-    boxShadow: "0 14px 30px rgba(15, 23, 42, 0.06)",
+    boxShadow: "0 20px 60px rgba(15, 23, 42, 0.08)",
   },
   tablePaneHead: {
-    padding: "18px 22px",
-    borderBottom: "1px solid #eef2f7",
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 16,
+    padding: "28px 32px",
+    borderBottom: "1px solid #d9e2f0",
+    background: "#ffffff",
   },
   tablePaneTitle: {
-    fontSize: 20,
-    fontWeight: 900,
-    color: "#0f172a",
-    letterSpacing: "-0.02em",
+    fontSize: 22,
+    fontWeight: 800,
+    color: "#0f274f",
   },
   tablePaneMeta: {
-    fontSize: 13,
-    color: "#64748b",
+    fontSize: 16,
+    color: "#4c6b95",
     fontWeight: 700,
   },
   tableWrap: {
@@ -2024,23 +2348,25 @@ const styles = {
     background: "#f8fbff",
   },
   viewBtn: {
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid #dbe3f0",
-    background: "#fff",
-    color: "#0f172a",
-    fontSize: 12,
+    height: 42,
+    padding: "0 18px",
+    borderRadius: 14,
+    border: "1px solid #cfd9ea",
+    background: "#ffffff",
+    color: "#1f2b3d",
+    fontSize: 15,
     fontWeight: 700,
     cursor: "pointer",
   },
   viewBtnActive: {
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid #bfdbfe",
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    fontSize: 12,
-    fontWeight: 700,
+    height: 42,
+    padding: "0 18px",
+    borderRadius: 14,
+    border: "1px solid #b7cdf3",
+    background: "#edf4ff",
+    color: "#123a72",
+    fontSize: 15,
+    fontWeight: 800,
     cursor: "pointer",
   },
   previewOverlay: {

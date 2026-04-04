@@ -1,4 +1,6 @@
 import express from "express";
+
+import projectAnalysisRoute from "./src/routes/projectAnalysis.js";
 import fs from "fs/promises";
 import path from "path";
 import cors from "cors";
@@ -37,6 +39,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+app.use("/api/project-analysis", projectAnalysisRoute);
 // increase timeouts a bit for local ollama
 app.use((req, res, next) => {
   req.setTimeout(120000);
