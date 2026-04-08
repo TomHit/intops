@@ -41,34 +41,53 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
     setActiveTab("summary");
 
     try {
-      const payload = {
-        github_link: githubLink.trim(),
-        api_spec_link: apiSpecLink.trim(),
-        project_notes: projectNotes.trim(),
-        uploaded_files: uploadedFiles.map((file) => ({
-          name: file.name,
-          size: file.size,
-          type: file.type,
-        })),
-      };
+      let data = null;
 
-      const res = await fetch("/api/project-analysis", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      if (uploadedFiles.length > 0) {
+        const formData = new FormData();
 
-      const text = await res.text();
-      const data = text ? JSON.parse(text) : null;
+        // 👇 IMPORTANT: backend expects "file"
+        formData.append("file", uploadedFiles[0]);
 
-      if (!res.ok) {
-        throw new Error(data?.message || "Project analysis failed.");
+        if (projectNotes.trim()) {
+          formData.append("project_notes", projectNotes.trim());
+        }
+
+        const res = await fetch("/api/analyze-document", {
+          method: "POST",
+          body: formData,
+        });
+
+        const text = await res.text();
+        data = text ? JSON.parse(text) : null;
+
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.message || "Document analysis failed.");
+        }
+
+        // 👇 CRITICAL: correct mapping
+        setAnalysisResult(data?.data?.analysis || null);
+      } else {
+        // fallback (optional)
+        const res = await fetch("/api/project-analysis", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            projectNotes: projectNotes || "",
+          }),
+        });
+
+        const text = await res.text();
+        data = text ? JSON.parse(text) : null;
+
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.message || "Project analysis failed.");
+        }
+
+        setAnalysisResult(data?.data || null);
       }
-
-      setAnalysisResult(data || null);
     } catch (err) {
       setAnalysisError(err.message || "Project analysis failed.");
     } finally {
@@ -370,10 +389,24 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
                     <div style={styles.infoCardWide}>
                       <div style={styles.infoLabel}>Workflow</div>
                       <div style={styles.infoValue}>
-                        {Array.isArray(projectCard?.workflow) &&
-                        projectCard.workflow.length
-                          ? projectCard.workflow.join(" → ")
-                          : "--"}
+                        {Array.isArray(
+                          projectCard?.context_workflow?.business_flow_hints,
+                        ) &&
+                        projectCard.context_workflow.business_flow_hints
+                          .length > 0
+                          ? projectCard.context_workflow.business_flow_hints
+                              .slice(0, 6)
+                              .map((item) => String(item).replaceAll("_", " "))
+                              .join(" → ")
+                          : Array.isArray(projectCard?.workflow) &&
+                              projectCard.workflow.length > 0
+                            ? projectCard.workflow
+                                .slice(0, 6)
+                                .map((item) =>
+                                  String(item).replaceAll("_", " "),
+                                )
+                                .join(" → ")
+                            : "--"}
                       </div>
                     </div>
 

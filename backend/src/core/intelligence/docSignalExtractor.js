@@ -7,7 +7,7 @@ function toLower(value) {
 }
 
 function normalizeWhitespace(text = "") {
-  return toText(text).replace(/\s+/g, " ").trim();
+  return toText(text).replace(/[□]/g, "→").replace(/\s+/g, " ").trim();
 }
 
 function uniqueList(items = []) {
@@ -81,44 +81,11 @@ function sentenceJoin(items = [], conjunction = "and") {
 }
 
 function normalizeFlowTerm(value = "") {
-  const clean = cleanPhrase(value);
-  const lower = toLower(clean);
-
-  const known = [
-    ["initiation", "initiation"],
-    ["validation", "validation"],
-    ["authorization", "authorization"],
-    ["response", "response"],
-    ["settlement", "settlement"],
-    ["refund", "refund"],
-    ["chargeback", "chargeback"],
-    ["notification", "notifications"],
-    ["report", "reporting"],
-    ["reporting", "reporting"],
-    ["dispute", "dispute_management"],
-    ["retry", "retry_handling"],
-    ["fraud", "fraud_detection"],
-    ["monitoring", "monitoring"],
-    ["dashboard", "dashboard_review"],
-  ];
-
-  for (const [pattern, label] of known) {
-    if (lower.includes(pattern)) return label;
-  }
-
-  const invalidTerms = [
-    "downtime",
-    "redundancy",
-    "audit",
-    "compliance",
-    "security",
-    "risk",
-    "mitigation",
-  ];
-
-  if (invalidTerms.some((t) => lower.includes(t))) {
-    return "";
-  }
+  return cleanPhrase(value)
+    .replace(/[□]/g, "→")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function isStructuredFlowSentence(sentence = "") {
@@ -379,25 +346,6 @@ const RISK_PATTERNS = [
   },
 ];
 
-const FEATURE_HINTS = [
-  "dashboard",
-  "payment link",
-  "product",
-  "checkout",
-  "discount",
-  "promotion code",
-  "metrics",
-  "bank details",
-  "verification",
-  "email",
-  "social media",
-  "tax",
-  "fulfillment",
-  "button",
-  "website",
-  "account settings",
-];
-
 const GENERIC_ACTIONS = [
   "create",
   "add",
@@ -455,6 +403,18 @@ const ACTOR_PATTERNS = [
 function extractRawText(input = {}) {
   const sources = [];
 
+  // 🔥 ADD THESE (IMPORTANT)
+  if (input.projectNotes) sources.push(toText(input.projectNotes));
+  if (input.githubData?.readme) sources.push(toText(input.githubData.readme));
+  if (input.githubData?.description)
+    sources.push(toText(input.githubData.description));
+
+  // Optional: OpenAPI summary extraction
+  if (input.openapi) {
+    sources.push(JSON.stringify(input.openapi).slice(0, 5000)); // safe limit
+  }
+
+  // Existing fields (keep)
   if (input.documentsText) sources.push(toText(input.documentsText));
   if (input.prdText) sources.push(toText(input.prdText));
   if (input.jiraText) sources.push(toText(input.jiraText));
@@ -462,12 +422,6 @@ function extractRawText(input = {}) {
   if (input.acceptanceCriteriaText)
     sources.push(toText(input.acceptanceCriteriaText));
   if (input.commentsText) sources.push(toText(input.commentsText));
-
-  if (Array.isArray(input.extraTexts)) {
-    for (const item of input.extraTexts) {
-      if (item) sources.push(toText(item));
-    }
-  }
 
   return sources.join("\n");
 }
@@ -606,10 +560,8 @@ function extractObjectFromSentence(sentence = "", action = "") {
     .replace(/\s+/g, " ")
     .trim();
 
-  // 🔥 REMOVE garbage endings
-  objectText = objectText
-    .replace(/\b(llm|api|json|http|copy)\b.*$/i, "")
-    .trim();
+  // keep original object — no artificial stripping
+  objectText = objectText.trim();
 
   // 🔥 REMOVE single-letter trailing junk
   objectText = objectText.replace(/\b[a-zA-Z]$/, "").trim();
@@ -729,7 +681,7 @@ function extractFlowSteps(sentences = [], lines = []) {
     }
 
     const current = stepMap.get(key);
-    current.score += 1;
+    current.score += objectText ? 1.5 : 1;
 
     if (!evidence[key]) evidence[key] = [];
     if (evidence[key].length < 3) {
@@ -750,54 +702,22 @@ function extractFlowSteps(sentences = [], lines = []) {
     "file",
     "files",
   ]);
-  const invalidFlowWords = new Set([
-    "downtime",
-    "redundancy",
-    "regulatory_changes",
-    "compliance",
-    "security",
-    "monitoring",
-  ]);
 
   const flows = [...stepMap.values()]
     .filter((item) => {
       if (!item || !item.action) return false;
 
       const action = toLower(item.action || "");
-
-      // 🚫 HARD FILTER: remove non-flow / infra / risk noise
-      const invalidPatterns = [
-        "downtime",
-        "redundancy",
-        "audit",
-        "compliance",
-        "security",
-        "risk",
-        "mitigation",
-        "detection",
-        "monitoring",
-        "alert",
-      ];
-
-      if (invalidPatterns.some((p) => action.includes(p))) {
+      // Only filter extreme noise, not domain terms
+      if (!item.action || item.action.length < 2) {
         return false;
       }
-
       // 🚫 remove weak/technical junk
       if (weakObjects.has(toLower(item.object)) || action.length < 2) {
         return false;
       }
 
-      // ✅ KEEP only meaningful business flow types
-      if (
-        item.step_type === "business_flow" ||
-        item.step_type === "business_flow_group"
-      ) {
-        return true;
-      }
-
-      // ❌ drop low-quality extracted actions
-      return false;
+      return true; // trust upstream scoring instead of hard filtering
     })
     .sort((a, b) => {
       const isBusinessA = a.step_type === "business_flow";
@@ -888,21 +808,130 @@ function extractRisks(sentences = []) {
   };
 }
 
-function extractFeatureHints(sentences = []) {
-  const features = [];
+function normalizeFeatureText(value = "") {
+  return String(value || "")
+    .replace(/^[-*•\d.)\s]+/, "")
+    .replace(/[.:;,\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isWeakFeature(value = "") {
+  const lower = normalizeFeatureText(value).toLowerCase();
+
+  if (!lower) return true;
+  if (lower.length < 3) return true;
+
+  const weak = new Set([
+    "system",
+    "platform",
+    "solution",
+    "feature",
+    "features",
+    "module",
+    "modules",
+    "flow",
+    "flows",
+    "requirement",
+    "requirements",
+    "support",
+    "process",
+    "processing",
+    "data",
+    "details",
+    "information",
+  ]);
+
+  return weak.has(lower);
+}
+
+function splitFeatureCandidates(text = "") {
+  return String(text || "")
+    .split(/[;,]/)
+    .map((x) => normalizeFeatureText(x))
+    .filter(Boolean);
+}
+
+function extractNounLikePhrases(sentences = []) {
+  const phrases = [];
 
   for (const sentence of sentences) {
-    const lower = toLower(sentence);
-    for (const hint of FEATURE_HINTS) {
-      if (lower.includes(hint)) {
-        pushUnique(features, hint);
+    const clean = normalizeWhitespace(sentence);
+    if (!clean) continue;
+
+    const chunks = clean
+      .split(/[.;,]/)
+      .map((x) => normalizeFeatureText(x))
+      .filter(Boolean);
+
+    for (const chunk of chunks) {
+      // keep short business phrases, avoid long descriptive sentences
+      const words = chunk.split(" ").filter(Boolean);
+      if (words.length >= 1 && words.length <= 4 && !isWeakFeature(chunk)) {
+        pushUnique(phrases, chunk);
       }
     }
   }
 
-  return features.slice(0, 25);
+  return phrases;
 }
 
+function extractFeatureHints(lines = [], sentences = []) {
+  const scored = {};
+
+  const addFeature = (value, weight = 1) => {
+    const clean = normalizeFeatureText(value);
+    if (!clean || isWeakFeature(clean)) return;
+
+    const key = clean.toLowerCase();
+    scored[key] = (scored[key] || 0) + weight;
+  };
+
+  // 1) Strongest source: colon-defined feature lines
+  for (const rawLine of lines || []) {
+    const line = cleanPhrase(rawLine);
+    if (!line || !line.includes(":")) continue;
+
+    const [left, right] = line.split(/:(.+)/).filter(Boolean);
+    const heading = normalizeFeatureText(left).toLowerCase();
+    const value = normalizeFeatureText(right);
+
+    if (!value) continue;
+
+    // heading itself can be a feature bucket
+    if (heading && !isWeakFeature(heading)) {
+      addFeature(heading, 2);
+    }
+
+    // extract actual values from the right side
+    for (const candidate of splitFeatureCandidates(value)) {
+      addFeature(candidate, 3);
+    }
+  }
+
+  // 2) Medium source: heading-like lines
+  for (const rawLine of lines || []) {
+    const line = cleanPhrase(rawLine);
+    if (!line) continue;
+
+    if (startsLikeHeading(line)) {
+      const heading = normalizeFeatureText(line);
+      if (!isWeakFeature(heading)) {
+        addFeature(heading, 1.5);
+      }
+    }
+  }
+
+  // 3) Fallback source: short noun-like phrases from sentences
+  for (const phrase of extractNounLikePhrases(sentences || [])) {
+    addFeature(phrase, 0.5);
+  }
+
+  return Object.entries(scored)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name)
+    .slice(0, 20);
+}
 function buildDocSummary({
   actors = [],
   flows = [],
@@ -912,60 +941,110 @@ function buildDocSummary({
   risks = [],
   userStories = [],
   featureHints = [],
+  context = null,
 }) {
   const parts = [];
 
-  if (flows.length > 0) {
-    const topFlows = flows
-      .slice(0, 6)
-      .map((x) => {
-        if (x.object) {
-          return `${x.action.replaceAll("_", " ")} ${x.object}`.trim();
-        }
-        return x.action.replaceAll("_", " ");
-      })
-      .filter(Boolean);
+  // ---------- CLEAN DATA ----------
+  const cleanActors = uniqueList(
+    actors.map((x) => String(x?.actor || "").trim()).filter(Boolean),
+  ).slice(0, 3);
 
-    if (topFlows.length > 0) {
+  const cleanFeatures = uniqueList(
+    featureHints.map((x) => String(x || "").trim()).filter(Boolean),
+  ).slice(0, 8);
+
+  const cleanFlows = uniqueList(
+    flows
+      .filter(
+        (x) =>
+          x?.step_type === "business_flow" &&
+          x?.action &&
+          !String(x.action).includes(":") &&
+          !String(x.action).includes("/") &&
+          !String(x.action).includes("&"),
+      )
+      .map((x) => String(x.action || "").trim())
+      .filter(Boolean),
+  ).slice(0, 6);
+
+  const cleanRisks = uniqueList(
+    risks.map((x) =>
+      String(x?.name || x || "")
+        .replaceAll("_", " ")
+        .trim(),
+    ),
+  ).slice(0, 4);
+
+  // ---------- 1. WHAT SYSTEM DOES (MOST IMPORTANT) ----------
+  if (context?.domain === "payment_gateway") {
+    parts.push(
+      `This system is a payment gateway designed to enable secure and seamless transactions between merchants and customers.`,
+    );
+
+    if (context.capabilities.length > 0) {
+      parts.push(`It supports ${sentenceJoin(context.capabilities)}.`);
+    }
+
+    if (context.advancedFeatures.length > 0) {
       parts.push(
-        `The documented workflow includes ${sentenceJoin(topFlows.slice(0, 5))}.`,
+        `Additional capabilities include ${sentenceJoin(context.advancedFeatures)}.`,
       );
     }
+
+    if (context.compliance.length > 0) {
+      parts.push(
+        `The system adheres to standards such as ${sentenceJoin(context.compliance)}.`,
+      );
+    }
+  } else if (cleanFeatures.length > 0) {
+    parts.push(
+      `This system enables ${sentenceJoin(cleanFeatures.slice(0, 5))}, supporting core business operations.`,
+    );
   }
 
-  if (actors.length > 0) {
-    const topActors = actors.slice(0, 3).map((x) => x.actor);
-    parts.push(`Key actors mentioned are ${topActors.join(", ")}.`);
+  // ---------- 2. WHO USES IT ----------
+  if (cleanActors.length > 0) {
+    parts.push(
+      `It is used by ${sentenceJoin(cleanActors)} to perform key operations.`,
+    );
   }
 
-  if (userStories.length > 0) {
-    parts.push(`User stories are present in the source material.`);
+  // ---------- 3. HOW IT WORKS ----------
+  if (cleanFlows.length > 0) {
+    parts.push(
+      `The system follows a structured transaction flow: ${cleanFlows.join(
+        " → ",
+      )}.`,
+    );
   }
 
-  if (validations.length > 0) {
-    parts.push(`Validation rules are described in the requirements.`);
-  }
-
-  if (constraints.length > 0) {
-    parts.push(`Operational or business constraints are also mentioned.`);
+  // ---------- 4. BUSINESS / TECH DEPTH ----------
+  if (validations.length > 0 || constraints.length > 0) {
+    parts.push(
+      `It includes defined validation rules and operational constraints to ensure reliability and consistency.`,
+    );
   }
 
   if (edgeCases.length > 0) {
-    parts.push(`Failure or exception scenarios are documented.`);
+    parts.push(
+      `Failure scenarios and exception handling mechanisms are also considered.`,
+    );
   }
 
-  if (risks.length > 0) {
-    const topRisks = risks.slice(0, 4).map((x) => x.name.replaceAll("_", " "));
-    parts.push(`Risk hints include ${topRisks.join(", ")}.`);
+  // ---------- 5. RISK / QA ----------
+  if (cleanRisks.length > 0) {
+    parts.push(
+      `Key risk areas include ${sentenceJoin(cleanRisks)}, which require focused testing.`,
+    );
   }
 
-  if (featureHints.length > 0) {
-    parts.push(`Feature clues include ${featureHints.slice(0, 5).join(", ")}.`);
-  }
-
-  return parts.join(" ");
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/[□]/g, "→") // 🔥 FIX encoding issue
+    .trim();
 }
-
 export function extractDocSignals(input = {}) {
   const rawText = extractRawText(input);
   const cleanText = String(rawText || "").trim();
@@ -982,7 +1061,63 @@ export function extractDocSignals(input = {}) {
   const validations = extractValidations(sentences);
   const constraints = extractConstraints(sentences);
   const edgeCases = extractEdgeCases(sentences);
-  const featureHints = extractFeatureHints(sentences);
+  const featureHints = extractFeatureHints(lines, sentences);
+
+  function inferDomainContext({ featureHints = [], flows = [], risks = [] }) {
+    const context = {
+      domain: null,
+      capabilities: [],
+      compliance: [],
+      advancedFeatures: [],
+    };
+
+    const text = [
+      ...featureHints,
+      ...flows.map((f) => f.action),
+      ...flows.map((f) => f.object),
+      ...risks.map((r) => r.name),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    if (
+      text.includes("payment") ||
+      text.includes("upi") ||
+      text.includes("wallet") ||
+      text.includes("refund") ||
+      text.includes("transaction")
+    ) {
+      context.domain = "payment_gateway";
+    }
+
+    if (/upi/.test(text)) context.capabilities.push("UPI payments");
+    if (/wallet/.test(text)) context.capabilities.push("wallet transactions");
+    if (/card|visa|mastercard/.test(text)) {
+      context.capabilities.push("card payments");
+    }
+    if (/net banking/.test(text)) context.capabilities.push("net banking");
+
+    if (/fraud/.test(text)) {
+      context.advancedFeatures.push("fraud detection");
+    }
+    if (/dashboard|analytics/.test(text)) {
+      context.advancedFeatures.push("analytics dashboard");
+    }
+    if (/notification|email|sms/.test(text)) {
+      context.advancedFeatures.push("real-time notifications");
+    }
+
+    if (/pci/.test(text)) context.compliance.push("PCI DSS");
+    if (/rbi/.test(text)) context.compliance.push("RBI guidelines");
+
+    return context;
+  }
+
+  const context = inferDomainContext({
+    featureHints,
+    flows: flowResult.flows,
+    risks: riskResult.risks,
+  });
 
   const summary = buildDocSummary({
     actors,
@@ -993,8 +1128,8 @@ export function extractDocSignals(input = {}) {
     risks: riskResult.risks,
     userStories,
     featureHints,
+    context,
   });
-
   const hasContent = cleanText.length > 0;
 
   const hasStructuredSignals =

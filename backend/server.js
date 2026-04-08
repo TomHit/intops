@@ -28,6 +28,20 @@ import {
 import { enqueueGenerationJob } from "./src/jobs/generationQueue.js";
 import "./src/workers/generationWorkerProcess.js";
 
+function sendSuccess(res, data = {}, status = 200) {
+  return res.status(status).json({
+    ok: true,
+    data,
+  });
+}
+
+function sendError(res, message = "Something went wrong", status = 500) {
+  return res.status(status).json({
+    ok: false,
+    message,
+  });
+}
+
 process.on("uncaughtException", (err) =>
   console.error("UNCAUGHT EXCEPTION:", err),
 );
@@ -53,19 +67,28 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "2mb" }));
 
 app.use((err, req, res, next) => {
-  if (err) {
-    console.error("GLOBAL ERROR:", err);
-  }
+  console.error("GLOBAL ERROR:", err);
 
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
     return res.status(400).json({
       ok: false,
       message: "Invalid JSON body",
-      detail: err.message,
+      error: {
+        type: "INVALID_JSON",
+        detail: err.message,
+      },
     });
   }
 
-  next(err);
+  return res.status(500).json({
+    ok: false,
+    message: "Internal server error",
+    error: {
+      type: "INTERNAL_ERROR",
+      detail: err?.message || "Unknown error",
+    },
+  });
+  return next(err);
 });
 
 // increase timeouts a bit for local ollama
@@ -142,7 +165,9 @@ async function loadAllProjects() {
 }
 
 // Health
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => {
+  return sendSuccess(res, { status: "healthy" });
+});
 
 app.post("/api/auth/org-login", async (req, res) => {
   try {
@@ -281,7 +306,7 @@ app.get("/api/projects", async (_req, res) => {
       generation_status: p.generation_status || "idle",
     }));
 
-    res.json(projects);
+    return sendSuccess(res, { projects });
   } catch (e) {
     console.error("PROJECTS ERROR:", e);
     res.status(500).json({ message: e?.message || String(e) });
@@ -323,20 +348,24 @@ app.post("/api/projects", async (req, res) => {
       docsStatus,
     });
 
-    return res.status(201).json({
-      project_id: created.project_id,
-      org_id: created.org_id,
-      project_name: created.name,
-      env_count: envCount,
-      description: created.description || "",
-      docs_status: created.docs_status || docsStatus,
-      spec_source_type: created.spec_source_type || specSourceType,
-      spec_source: created.spec_source || specSource,
-      spec_format: created.spec_format || specFormat,
-      last_generated_at: created.last_generated_at || null,
-      current_run_id: created.current_run_id || null,
-      generation_status: created.generation_status || "idle",
-    });
+    return sendSuccess(
+      res,
+      {
+        project_id: created.project_id,
+        org_id: created.org_id,
+        project_name: created.name,
+        env_count: envCount,
+        description: created.description || "",
+        docs_status: created.docs_status || docsStatus,
+        spec_source_type: created.spec_source_type || specSourceType,
+        spec_source: created.spec_source || specSource,
+        spec_format: created.spec_format || specFormat,
+        last_generated_at: created.last_generated_at || null,
+        current_run_id: created.current_run_id || null,
+        generation_status: created.generation_status || "idle",
+      },
+      201,
+    );
   } catch (e) {
     console.error("PROJECT CREATE ERROR:", e);
     res.status(500).json({ message: e?.message || String(e) });
@@ -356,9 +385,8 @@ app.get("/api/projects/:id/endpoints", async (req, res) => {
     const endpoints = extractEndpointsLite(doc);
 
     console.log("ENDPOINTS COUNT:", endpoints.length);
-
-    res.json(
-      endpoints.map((e) => ({
+    return sendSuccess(res, {
+      endpoints: endpoints.map((e) => ({
         id: e.id,
         method: e.method,
         path: e.path,
@@ -366,7 +394,7 @@ app.get("/api/projects/:id/endpoints", async (req, res) => {
         summary: e.summary || "",
         response: e.response || null,
       })),
-    );
+    });
   } catch (e) {
     console.error("ENDPOINTS ERROR:", e);
     res.status(400).json({ message: e?.message || String(e) });
@@ -401,7 +429,7 @@ app.get("/api/projects/:id/endpoints/full", async (req, res) => {
       };
     });
 
-    res.json(enriched);
+    return sendSuccess(res, { endpoints: enriched });
   } catch (e) {
     console.error("FULL ENDPOINTS ERROR:", e);
     res.status(400).json({ message: e?.message || String(e) });
@@ -700,11 +728,10 @@ app.get("/api/runs/:runId/cases", async (req, res) => {
 
     const cases = (result.cases || []).map((row) => row.payload);
 
-    return res.json({
-      ok: true,
-      run_id: runId,
+    return sendSuccess(res, {
+      run_id,
       page,
-      page_size: pageSize,
+      page_size,
       total_cases: result.total || 0,
       cases,
     });

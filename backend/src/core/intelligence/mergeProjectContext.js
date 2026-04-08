@@ -54,14 +54,15 @@ function mergeWorkflow(baseWorkflow = [], docFlows = []) {
         .map((f) => {
           if (!f?.action) return null;
 
-          const action = f.action.replaceAll("_", " ");
+          const action = normalizeText(f.action);
 
-          // 🔥 filter bad objects
-          if (!f.object || f.object.length < 3) return action;
+          if (!f.object || f.object.length < 3) {
+            return action;
+          }
 
-          if (/^(llm|api|json|http|copy)$/i.test(f.object)) return action;
+          const object = normalizeText(f.object);
 
-          return `${action} ${f.object}`;
+          return `${action} ${object}`;
         })
         .filter(Boolean)
     : [];
@@ -71,75 +72,51 @@ function mergeWorkflow(baseWorkflow = [], docFlows = []) {
     business_flow_hints: uniqueList(enrichedHints).slice(0, 10),
   };
 }
-
 function mergeSummary(baseSummary = "", docSummary = "", docSignals = {}) {
-  const cleanBase = String(baseSummary || "").trim();
-  const cleanDoc = String(docSummary || "").trim();
+  const cleanBase = normalizeText(baseSummary);
+  const cleanDoc = normalizeText(docSummary);
 
-  const hasStrongDocContext =
-    (docSignals?.flows || []).length > 0 ||
-    (docSignals?.user_stories || []).length > 0;
+  const docFlowSummary = Array.isArray(docSignals?.flows)
+    ? uniqueList(
+        docSignals.flows
+          .filter((f) => f.step_type === "business_flow")
+          .map((f) =>
+            String(f.action || "")
+              .replaceAll("_", " ")
+              .trim(),
+          )
+          .filter(Boolean),
+      ).slice(0, 5)
+    : [];
 
-  if (!hasStrongDocContext) return cleanBase;
+  const flowSentence =
+    docFlowSummary.length > 0
+      ? ` The documented workflow includes ${docFlowSummary.join(" → ")}.`
+      : "";
 
-  // 🔥 Only take useful part of doc summary
-  let cleanedDoc = cleanDoc
-    .replace(/documented business steps include[^.]+./i, "")
-    .replace(/feature clues include[^.]+./i, "")
-    .trim();
-
-  // 🔥 Avoid duplication
-  if (!cleanedDoc || cleanedDoc.length < 20) {
-    return cleanBase;
+  if (cleanBase) {
+    return `${cleanBase}${flowSentence}`.trim();
   }
 
-  return `${cleanBase} ${cleanedDoc}`;
-}
+  if (cleanDoc) {
+    return cleanDoc;
+  }
 
+  return flowSentence.trim();
+}
 function mergeMissing(
   baseMissing = [],
   docValidations = [],
   docConstraints = [],
   docEdgeCases = [],
 ) {
-  const merged = [...(baseMissing || [])];
-
-  const lowerJoined = [
-    ...(docValidations || []),
-    ...(docConstraints || []),
-    ...(docEdgeCases || []),
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  if (lowerJoined.includes("rate limit") && !merged.includes("rate_limiting")) {
-    merged.push("rate_limiting");
-  }
-
-  if (
-    (lowerJoined.includes("file size") || lowerJoined.includes("file type")) &&
-    !merged.includes("file_type_validation")
-  ) {
-    merged.push("file_type_validation");
-  }
-
-  if (
-    (lowerJoined.includes("file size") || lowerJoined.includes("max size")) &&
-    !merged.includes("file_size_limits")
-  ) {
-    merged.push("file_size_limits");
-  }
-
-  if (
-    (lowerJoined.includes("retry") || lowerJoined.includes("duplicate")) &&
-    !merged.includes("idempotency_controls")
-  ) {
-    merged.push("idempotency_controls");
-  }
-
-  return uniqueList(merged).slice(0, 20);
+  return uniqueList([
+    ...(baseMissing || []),
+    ...(docValidations || []).map((v) => normalizeText(v)),
+    ...(docConstraints || []).map((c) => normalizeText(c)),
+    ...(docEdgeCases || []).map((e) => normalizeText(e)),
+  ]).slice(0, 20);
 }
-
 function buildContextHighlights(base = {}, docFlows = [], docSignals = {}) {
   const highlights = [];
 
@@ -157,7 +134,6 @@ function buildContextHighlights(base = {}, docFlows = [], docSignals = {}) {
       if (!f?.action) return null;
       const action = f.action.replaceAll("_", " ");
       if (!f.object || f.object.length < 3) return action;
-      if (/^(llm|api|json|http|copy)$/i.test(f.object)) return action;
       return `${action} ${f.object}`;
     })
     .filter(Boolean);
@@ -198,9 +174,7 @@ export function mergeProjectContext(baseAnalysis = {}, docSignals = {}) {
     .filter(Boolean);
 
   // 🔥 filter noisy risks
-  const filteredDocRisks = docRisks.filter(
-    (r) => !["file_upload_security"].includes(r),
-  );
+  const filteredDocRisks = docRisks;
 
   const mergedRiskTags = mergePrimitiveLists(
     baseProjectCard.risk_tags || [],
