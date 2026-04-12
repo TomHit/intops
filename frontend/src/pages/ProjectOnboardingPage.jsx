@@ -14,6 +14,7 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
   const [githubLink, setGithubLink] = useState("");
   const [apiSpecLink, setApiSpecLink] = useState("");
   const [projectNotes, setProjectNotes] = useState("");
+  const [jiraLink, setJiraLink] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
@@ -25,9 +26,10 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
       uploadedFiles.length > 0 ||
       githubLink.trim() ||
       apiSpecLink.trim() ||
-      projectNotes.trim()
+      projectNotes.trim() ||
+      jiraLink.trim()
     );
-  }, [uploadedFiles, githubLink, apiSpecLink, projectNotes]);
+  }, [uploadedFiles, githubLink, apiSpecLink, projectNotes, jiraLink]);
 
   const handleFilesChange = (e) => {
     const files = Array.from(e.target.files || []);
@@ -53,19 +55,36 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
           formData.append("project_notes", projectNotes.trim());
         }
 
+        if (githubLink.trim()) {
+          formData.append("github_link", githubLink.trim());
+        }
+
+        if (apiSpecLink.trim()) {
+          formData.append("api_spec_link", apiSpecLink.trim());
+        }
+
+        if (jiraLink.trim()) {
+          formData.append("jira_url", jiraLink.trim());
+        }
+
         const res = await fetch("/api/analyze-document", {
           method: "POST",
           body: formData,
         });
 
         const text = await res.text();
-        data = text ? JSON.parse(text) : null;
+
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(text || "Document analysis failed.");
+        }
 
         if (!res.ok || !data?.ok) {
           throw new Error(data?.message || "Document analysis failed.");
         }
 
-        setAnalysisResult(data?.data?.analysis || null);
+        setAnalysisResult(data?.data?.analysis || data?.data || null);
       } else {
         const res = await fetch("/api/project-analysis", {
           method: "POST",
@@ -73,18 +92,26 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            projectNotes: projectNotes || "",
+            project_notes: projectNotes || "",
+            github_link: githubLink || "",
+            api_spec_link: apiSpecLink || "",
+            jira_url: jiraLink || "",
           }),
         });
 
         const text = await res.text();
-        data = text ? JSON.parse(text) : null;
 
-        if (!res.ok || !data?.ok) {
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(text || "Project analysis failed.");
+        }
+
+        if (!res.ok) {
           throw new Error(data?.message || "Project analysis failed.");
         }
 
-        setAnalysisResult(data?.data || null);
+        setAnalysisResult(data?.data?.analysis || data?.data || data || null);
       }
     } catch (err) {
       setAnalysisError(err.message || "Project analysis failed.");
@@ -92,7 +119,6 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
       setIsAnalyzing(false);
     }
   }
-
   const projectCard = analysisResult?.projectCard || null;
   const confidence = analysisResult?.confidence;
 
@@ -276,6 +302,17 @@ export default function ProjectOnboardingPage({ onContinueToGeneration }) {
                   placeholder="https://github.com/org/repo"
                   value={githubLink}
                   onChange={(e) => setGithubLink(e.target.value)}
+                />
+              </label>
+
+              <label style={styles.field}>
+                <span style={styles.label}>Jira story link</span>
+                <input
+                  style={styles.input}
+                  type="text"
+                  placeholder="https://your-company.atlassian.net/browse/ABC-123"
+                  value={jiraLink}
+                  onChange={(e) => setJiraLink(e.target.value)}
                 />
               </label>
 

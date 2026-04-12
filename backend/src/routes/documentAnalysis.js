@@ -59,6 +59,7 @@ router.post("/analyze-document", upload.single("file"), async (req, res) => {
       projectNotes: String(req.body?.project_notes || ""),
       documentsText: ingested.text,
 
+      jiraUrl: String(req.body?.jira_url || req.body?.jiraUrl || ""),
       story: String(req.body?.story || ""),
       acceptanceCriteria: String(req.body?.acceptance_criteria || ""),
       comments: String(req.body?.comments || ""),

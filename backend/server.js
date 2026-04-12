@@ -98,7 +98,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api", documentAnalysisRoute);
-app.use("/api/project-analysis", projectAnalysisRoute);
+app.use("/api", projectAnalysisRoute);
 
 const PROJECTS_DIR = path.join(process.cwd(), "projects");
 

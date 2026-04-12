@@ -3,7 +3,7 @@ import { analyzeInput } from "../core/intelligence/analyzeInput.js";
 
 const router = express.Router();
 
-router.post("/", async (req, res) => {
+router.post("/project-analysis", async (req, res) => {
   console.log("HIT /api/project-analysis");
   console.log("headers content-type:", req.headers["content-type"]);
   console.log("body keys:", Object.keys(req.body || {}));
@@ -37,7 +37,7 @@ router.post("/", async (req, res) => {
       projectNotes: project_notes || "",
       documentsText: documents_text || "",
       prdText: prd_text || "",
-      jiraText: jira_text || "",
+      jiraUrl: req.body?.jiraUrl || req.body?.jira_url || "",
       storyText: story_text || "",
       acceptanceCriteriaText: acceptance_criteria_text || "",
       commentsText: comments_text || "",

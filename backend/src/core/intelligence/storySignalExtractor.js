@@ -22,6 +22,12 @@ function detectActors(text = "") {
   if (/\badmin\b/.test(t)) actors.push("admin");
   if (/\boperator\b/.test(t)) actors.push("operator");
   if (/\bagent\b/.test(t)) actors.push("agent");
+  if (/\bbuyer\b/.test(t)) actors.push("buyer");
+  if (/\bseller\b/.test(t)) actors.push("seller");
+  if (/\bpatient\b/.test(t)) actors.push("patient");
+  if (/\bdoctor\b/.test(t)) actors.push("doctor");
+  if (/\bmanager\b/.test(t)) actors.push("manager");
+  if (/\bemployee\b/.test(t)) actors.push("employee");
 
   return unique(actors);
 }
@@ -29,8 +35,12 @@ function detectActors(text = "") {
 function detectIntent(text = "") {
   const t = cleanText(text);
 
-  const asMatch = t.match(/as\s+a?n?\s+(.+?),/i);
-  const wantMatch = t.match(/i\s+want\s+to\s+(.+?)(?:\s+so\s+that|\.$|$)/i);
+  const asMatch = t.match(
+    /as\s+a?n?\s+(.+?)(?:,|\s+i\s+want|\s+i\s+should|\s+i\s+can|$)/i,
+  );
+  const wantMatch = t.match(
+    /i\s+(?:want\s+to|should\s+be\s+able\s+to|can)\s+(.+?)(?:\s+so\s+that|\.$|$)/i,
+  );
   const soThatMatch = t.match(/so\s+that\s+(.+?)(?:\.$|$)/i);
 
   return {
@@ -83,8 +93,9 @@ function detectActionHints(text = "") {
   if (/\brefund\b/.test(t)) out.push("refund");
   if (/\bsettlement\b/.test(t)) out.push("settlement");
   if (/\bdispute\b|\bchargeback\b/.test(t)) out.push("dispute");
-  if (/\bnotify\b|\bemail\b|\bsms\b|\balert\b/.test(t))
+  if (/\bnotify\b|\bemail\b|\bsms\b|\balert\b/.test(t)) {
     out.push("notification");
+  }
   if (/\blogin\b|\bauth\b|\bsign in\b/.test(t)) out.push("authentication");
   if (/\bupload\b|\battachment\b|\bfile\b/.test(t)) out.push("upload");
   if (/\bsearch\b|\bretrieve\b|\bquery\b/.test(t)) out.push("search");
@@ -99,10 +110,12 @@ function detectConstraints(text = "") {
   if (/\bretry\b/.test(t)) out.push("retry handling");
   if (/\bidempot/i.test(t)) out.push("idempotency");
   if (/\breal[- ]?time\b/.test(t)) out.push("real-time behavior");
-  if (/\blatency\b|\bperformance\b/.test(t))
+  if (/\blatency\b|\bperformance\b/.test(t)) {
     out.push("performance expectations");
-  if (/\bsecure\b|\bencrypt\b|\btoken\b|\b2fa\b/.test(t))
+  }
+  if (/\bsecure\b|\bencrypt\b|\btoken\b|\b2fa\b/.test(t)) {
     out.push("security controls");
+  }
 
   return unique(out);
 }
@@ -127,6 +140,11 @@ export function extractStorySignals({
     source_type: "user_story",
     has_content: Boolean(cleanText(combined)),
     raw_text: combined,
+    source_parts: {
+      story: cleanText(story),
+      acceptance_criteria: cleanText(acceptanceCriteria),
+      comments: cleanText(comments),
+    },
     actors,
     intent,
     domain_hints,

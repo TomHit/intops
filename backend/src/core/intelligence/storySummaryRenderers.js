@@ -12,7 +12,10 @@ function joinList(items = [], conjunction = "and") {
   if (clean.length === 0) return "";
   if (clean.length === 1) return clean[0];
   if (clean.length === 2) return `${clean[0]} ${conjunction} ${clean[1]}`;
-  return `${clean.slice(0, -1).join(", ")}, ${conjunction} ${clean[clean.length - 1]}`;
+
+  return `${clean.slice(0, -1).join(", ")}, ${conjunction} ${
+    clean[clean.length - 1]
+  }`;
 }
 
 function humanizeFlow(items = []) {
@@ -45,9 +48,9 @@ export function renderStoryExecutiveSummary(summary = {}, storySignals = {}) {
 
   if (systemType || domain) {
     parts.push(
-      `This user story appears to describe a ${systemType || "software workflow"}${
-        domain ? ` in the ${domain} domain` : ""
-      }.`,
+      `This user story appears to describe ${
+        systemType || "a software workflow"
+      }${domain ? ` in ${domain}` : ""}.`,
     );
   }
 
@@ -65,7 +68,9 @@ export function renderStoryExecutiveSummary(summary = {}, storySignals = {}) {
 
   if (capabilities.length > 0) {
     parts.push(
-      `Based on the story, the likely functional scope includes ${joinList(capabilities)}.`,
+      `Based on the story, the likely functional scope includes ${joinList(
+        capabilities,
+      )}.`,
     );
   }
 
@@ -134,7 +139,9 @@ export function renderStoryQaSummary(summary = {}, storySignals = {}) {
   if (flowRiskMap.length > 0) {
     const reasoning = flowRiskMap.map(
       (x) =>
-        `- ${normalizeText(x.flow)} → risk: ${normalizeText(x.risk)} → test focus: ${normalizeText(x.test)}`,
+        `- ${normalizeText(x.flow)}: risk = ${normalizeText(
+          x.risk,
+        )}; test focus = ${normalizeText(x.test)}`,
     );
     sections.push(`QA reasoning:\n${reasoning.join("\n")}`);
   }
