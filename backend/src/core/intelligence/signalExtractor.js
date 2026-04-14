@@ -228,7 +228,24 @@ const WORKFLOW_KEYWORDS = {
     "login",
   ],
   webhook: ["webhook", "event", "events", "callback"],
-  payment: ["payment", "charge", "invoice", "subscription", "payout", "refund"],
+  process: [
+    "process",
+    "processing",
+    "execute",
+    "handle",
+    "orchestrate",
+    "submit",
+    "confirm",
+  ],
+  validate: [
+    "validate",
+    "validation",
+    "verify",
+    "verification",
+    "check",
+    "screen",
+  ],
+  respond: ["response", "respond", "return", "result", "output", "status"],
 };
 
 const RISK_KEYWORDS = {
@@ -365,6 +382,44 @@ function getTopTerms(bucket, limit = 12) {
       sources: data.sources,
       examples: data.examples || [],
     }));
+}
+
+function getTopScoredKeys(scoreMap = {}, limit = 5) {
+  return Object.entries(scoreMap)
+    .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+    .slice(0, limit)
+    .map(([key, score]) => ({
+      key,
+      score: Number((score || 0).toFixed(2)),
+    }));
+}
+
+function computeCompositeSignals(scores = {}) {
+  const domain = scores.domain || {};
+  const ai = scores.ai || {};
+  const workflow = scores.workflow || {};
+  const risk = scores.risk || {};
+
+  const ragStrength =
+    (ai.rag || 0) + (workflow.retrieve || 0) + (workflow.ingest || 0);
+
+  const llmStrength = ai.llm || 0;
+  const mlStrength = ai.ml || 0;
+
+  return {
+    rag_strength: Number(ragStrength.toFixed(2)),
+    llm_strength: Number(llmStrength.toFixed(2)),
+    ml_strength: Number(mlStrength.toFixed(2)),
+    is_ai_system: ragStrength >= 3 || llmStrength >= 2 || mlStrength >= 2,
+    dominant_domain:
+      Object.entries(domain).sort(
+        (a, b) => (b[1] || 0) - (a[1] || 0),
+      )[0]?.[0] || "unknown",
+    dominant_risks: Object.entries(risk)
+      .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+      .slice(0, 5)
+      .map(([key]) => key),
+  };
 }
 
 export function extractSignals(input = {}) {
@@ -886,17 +941,28 @@ export function extractSignals(input = {}) {
     repo_terms: getTopTerms(signals.evidence.repo_terms, 12),
     api_patterns: getTopTerms(signals.evidence.api_patterns, 12),
   };
-  if (
-    (signals.scores.domain.banking_finance || 0) >= 5 &&
-    (signals.scores.ai.rag || 0) <= 1 &&
-    (signals.scores.ai.llm || 0) <= 1
-  ) {
-    signals.scores.ai = {};
-    signals.evidence.ai_terms = {};
-    if (signals.topEvidence) {
-      signals.topEvidence.ai_terms = [];
-    }
-  }
+
+  signals.workflow_model = getTopScoredKeys(signals.scores.workflow, 6).map(
+    ({ key }) => key,
+  );
+
+  signals.system_profile = {
+    dominant_domain:
+      getTopScoredKeys(signals.scores.domain, 1)[0]?.key || "unknown",
+    primary_workflows: signals.workflow_model,
+    primary_risks: getTopScoredKeys(signals.scores.risk, 5).map(
+      ({ key }) => key,
+    ),
+    interaction_modes: [
+      signals.hasChat ? "chat" : null,
+      signals.hasSearch ? "search" : null,
+      signals.hasUpload ? "upload" : null,
+      signals.hasPredict ? "predict" : null,
+      signals.hasAuth ? "authenticated" : null,
+    ].filter(Boolean),
+  };
+
+  signals.composite = computeCompositeSignals(signals.scores);
 
   signals.flags = {
     openapiOnly:
@@ -905,15 +971,15 @@ export function extractSignals(input = {}) {
       !signals.sources.github.present &&
       !signals.sources.notes.present,
 
-    // 🔥 STRICT RAG detection (multi-signal required)
     hasStrongRagHints:
-      (signals.scores.ai.rag || 0) >= 4 && // ⬅️ higher threshold
-      (signals.scores.workflow.retrieve || 0) >= 2 && // ⬅️ MUST have retrieval
-      (signals.scores.workflow.ingest || 0) >= 1 && // ⬅️ MUST have ingestion
-      (signals.scores.ai.llm || 0) >= 1 && // ⬅️ MUST have LLM
-      !((signals.scores.domain.banking_finance || 0) >= 4), // ⬅️ BLOCK finance systems
+      (signals.scores.ai.rag || 0) >= 4 &&
+      (signals.scores.workflow.retrieve || 0) >= 2 &&
+      (signals.scores.workflow.ingest || 0) >= 1 &&
+      (signals.scores.ai.llm || 0) >= 1,
 
     hasStrongPaymentsHints: (signals.scores.domain.banking_finance || 0) >= 5,
+    hasStrongAuthHints:
+      signals.hasAuth || (signals.scores.risk.auth_authz || 0) >= 2,
   };
 
   return signals;

@@ -5,13 +5,63 @@ function normalizePhrase(value = "") {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+function uniqueNormalized(items = []) {
+  const seen = new Set();
+  const result = [];
+
+  for (const item of items || []) {
+    const normalized = normalizePhrase(item);
+    if (!normalized) continue;
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function limitList(items = [], limit = 6) {
+  return uniqueNormalized(items).slice(0, limit);
+}
+
+function sentenceJoin(items = [], conjunction = "and") {
+  const filtered = uniqueNormalized(items);
+
+  if (filtered.length === 0) return "";
+  if (filtered.length === 1) return filtered[0];
+  if (filtered.length === 2) {
+    return `${filtered[0]} ${conjunction} ${filtered[1]}`;
+  }
+
+  return `${filtered.slice(0, -1).join(", ")}, ${conjunction} ${filtered[filtered.length - 1]}`;
+}
+
+function deriveLifecycleStages(summary = {}) {
+  return uniqueNormalized(summary?.workflows?.primary || []);
+}
+
 function buildQaPlanningSummary(summary = {}, signals = {}) {
-  const functional = [
-    ...(summary?.workflows?.primary || []),
-    ...(summary?.workflows?.secondary || []),
-    ...(summary?.capabilities || []),
-    ...(signals?.qa_signals?.functional || []),
-  ];
+  const lifecycle = deriveLifecycleStages(summary);
+  const workflowModel = uniqueNormalized(signals?.workflow_model || []);
+
+  const functional = lifecycle.length
+    ? [
+        ...lifecycle.map((step) => `Validate ${step} stage behavior`),
+        ...workflowModel.map((step) => `Validate ${step} workflow behavior`),
+        ...(summary?.workflows?.secondary || []),
+        ...(summary?.capabilities || []),
+        ...(signals?.qa_signals?.functional || []),
+      ]
+    : [
+        ...workflowModel.map((step) => `Validate ${step} workflow behavior`),
+        ...(summary?.capabilities || []),
+        ...(summary?.workflows?.secondary || []),
+        ...(signals?.qa_signals?.functional || []),
+      ];
 
   const integration = [
     ...(signals?.systems || []),
@@ -24,12 +74,18 @@ function buildQaPlanningSummary(summary = {}, signals = {}) {
   ];
 
   const reliability = [
+    "Retry behavior",
+    "Failure handling",
+    "Timeout scenarios",
     ...(summary?.operations?.constraints || []),
     ...(signals?.constraints || []),
     ...(signals?.qa_signals?.reliability || []),
   ];
 
   const security = [
+    "Authentication",
+    "Authorization",
+    "Data protection",
     ...(summary?.security_compliance?.auth || []),
     ...(summary?.security_compliance?.data_protection || []),
     ...(signals?.qa_signals?.security || []),
@@ -41,31 +97,13 @@ function buildQaPlanningSummary(summary = {}, signals = {}) {
   ];
 
   return {
-    functional,
-    integration,
-    database,
-    reliability,
-    security,
-    unknowns,
+    functional: uniqueNormalized(functional),
+    integration: uniqueNormalized(integration),
+    database: uniqueNormalized(database),
+    reliability: uniqueNormalized(reliability),
+    security: uniqueNormalized(security),
+    unknowns: uniqueNormalized(unknowns),
   };
-}
-
-function sentenceJoin(items = [], conjunction = "and") {
-  const filtered = (items || [])
-    .map((item) => normalizePhrase(item))
-    .filter(Boolean);
-
-  if (filtered.length === 0) return "";
-  if (filtered.length === 1) return filtered[0];
-  if (filtered.length === 2) {
-    return `${filtered[0]} ${conjunction} ${filtered[1]}`;
-  }
-
-  return `${filtered.slice(0, -1).join(", ")}, ${conjunction} ${filtered[filtered.length - 1]}`;
-}
-
-function limitList(items = [], limit = 6) {
-  return (items || []).filter(Boolean).slice(0, limit);
 }
 
 function buildIdentityText(summary = {}) {
@@ -107,9 +145,7 @@ function buildWorkflowText(summary = {}) {
   const parts = [];
 
   if (primary.length) {
-    parts.push(
-      `Its primary workflow follows ${primary.map(normalizePhrase).join(" → ")}.`,
-    );
+    parts.push(`Its primary lifecycle follows ${primary.join(" → ")}.`);
   }
 
   if (secondary.length) {
@@ -140,9 +176,7 @@ function buildComplianceText(summary = {}) {
     );
   }
 
-  const securitySignals = [...auth, ...dataProtection]
-    .map(normalizePhrase)
-    .filter(Boolean);
+  const securitySignals = uniqueNormalized([...auth, ...dataProtection]);
 
   if (securitySignals.length) {
     parts.push(
@@ -204,11 +238,77 @@ function buildEvidenceText(summary = {}) {
   return `Supporting evidence includes ${sentenceJoin(snippets)}.`;
 }
 
-export function buildExecutiveSummary(summary = {}) {
+function buildSystemNarrative(summary = {}) {
+  const intent = normalizePhrase(summary?.intent?.user_goal || "");
+  const actors = limitList(summary?.actors || [], 3);
+  const workflow = deriveLifecycleStages(summary);
+  const entities = limitList(summary?.data_entities || [], 4);
+  const integrations = limitList(summary?.systems || [], 3);
+
+  const parts = [];
+
+  if (intent) {
+    parts.push(`The system is designed to ${intent}.`);
+  }
+
+  if (actors.length) {
+    parts.push(`It involves actors such as ${sentenceJoin(actors)}.`);
+  }
+
+  if (workflow.length) {
+    parts.push(`The core lifecycle includes ${workflow.join(" → ")}.`);
+  }
+
+  if (entities.length) {
+    parts.push(`It manages data entities like ${sentenceJoin(entities)}.`);
+  }
+
+  if (integrations.length) {
+    parts.push(`The system interacts with ${sentenceJoin(integrations)}.`);
+  }
+
+  return parts.join(" ");
+}
+
+export function buildExecutiveSummary(summary = {}, signals = {}) {
+  const systemProfile = signals?.system_profile || {};
+  const composite = signals?.composite || {};
+
+  const identity = buildIdentityText(summary);
+
+  const intent = normalizePhrase(summary?.intent?.user_goal || "");
+
+  const workflows = uniqueNormalized(
+    summary?.workflows?.primary?.length
+      ? summary.workflows.primary
+      : systemProfile.primary_workflows || [],
+  );
+
+  const workflowText = workflows.length
+    ? `The system operates through ${workflows.join(" → ")}.`
+    : "";
+
+  const actors = limitList(summary?.actors || [], 3);
+  const actorsText = actors.length
+    ? `Primary actors include ${sentenceJoin(actors)}.`
+    : "";
+
+  const risks = systemProfile.primary_risks || [];
+  const riskText = risks.length
+    ? `Key risks include ${sentenceJoin(risks)}.`
+    : "";
+
+  const aiText = composite.is_ai_system
+    ? `The system includes intelligent or predictive capabilities.`
+    : "";
+
   const parts = [
-    buildIdentityText(summary),
-    buildCapabilitiesText(summary),
-    buildWorkflowText(summary),
+    identity,
+    intent ? `The primary goal is to ${intent}.` : "",
+    actorsText,
+    workflowText,
+    riskText,
+    aiText,
     buildComplianceText(summary),
     buildNonFunctionalText(summary),
     buildTestingText(summary),
@@ -228,28 +328,28 @@ export function buildQASummary(summary = {}, signals = {}) {
 
   const parts = [
     "QA Planning Summary",
-
     section("Functional", qa.functional),
     section("Integration", qa.integration),
     section("Database", qa.database),
     section("Reliability", qa.reliability),
     section("Security", qa.security),
     section("Needs clarification", qa.unknowns),
-
     "Note: This summary combines story, PRD, and inferred signals. Unknowns should not be assumed during test generation.",
   ].filter(Boolean);
 
   return parts.join("\n\n");
 }
 
-export function buildProjectSummary(summary = {}) {
-  return buildExecutiveSummary(summary);
+export function buildProjectSummary(summary = {}, signals = {}) {
+  return buildExecutiveSummary(summary, signals);
 }
 
-export function buildDetailedSummary(summary = {}) {
+export function buildDetailedSummary(summary = {}, signals = {}) {
   const parts = [
-    buildExecutiveSummary(summary),
+    buildExecutiveSummary(summary, signals),
     buildActorsText(summary),
+    buildCapabilitiesText(summary),
+    buildWorkflowText(summary),
     buildConstraintsText(summary),
     buildFailureText(summary),
     buildOpenQuestionsText(summary),

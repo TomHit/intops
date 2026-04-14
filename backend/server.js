@@ -25,7 +25,15 @@ import {
   getProjectById,
   listAllProjects,
 } from "./src/repositories/projectsRepo.js";
-import { enqueueGenerationJob } from "./src/jobs/generationQueue.js";
+let enqueueGenerationJobFn = null;
+
+async function getEnqueueGenerationJob() {
+  if (!enqueueGenerationJobFn) {
+    const mod = await import("./src/jobs/generationQueue.js");
+    enqueueGenerationJobFn = mod.enqueueGenerationJob;
+  }
+  return enqueueGenerationJobFn;
+}
 
 function sendSuccess(res, data = {}, status = 200) {
   return res.status(status).json({
@@ -96,9 +104,57 @@ app.use((req, res, next) => {
   res.setTimeout(120000);
   next();
 });
+// routes first
 app.use("/api", documentAnalysisRoute);
 app.use("/api", projectAnalysisRoute);
 
+// ... all app.get/app.post routes here ...
+
+app.use((err, req, res, next) => {
+  console.error("GLOBAL ERROR:", err);
+
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      ok: false,
+      message: "Invalid JSON body",
+      error: {
+        type: "INVALID_JSON",
+        detail: err.message,
+      },
+    });
+  }
+
+  return res.status(500).json({
+    ok: false,
+    message: "Internal server error",
+    error: {
+      type: "INTERNAL_ERROR",
+      detail: err?.message || "Unknown error",
+    },
+  });
+});
+
+app.get("/api/ready", async (_req, res) => {
+  let db = false;
+  let queue = false;
+
+  try {
+    await pool.query("SELECT 1");
+    db = true;
+  } catch {}
+
+  try {
+    const enqueueGenerationJob = await getEnqueueGenerationJob();
+    queue = typeof enqueueGenerationJob === "function";
+  } catch {}
+
+  return res.json({
+    ok: true,
+    api: true,
+    db,
+    queue,
+  });
+});
 const PROJECTS_DIR = path.join(process.cwd(), "projects");
 
 function normalizeOrgNameFromEmail(email = "") {
@@ -477,20 +533,30 @@ app.post("/api/generate", async (req, res) => {
       request_summary: summarizeGenerateRequest(payload),
       meta: { run_id: run.run_id, project_id: projectId },
     });
+    try {
+      const enqueueGenerationJob = await getEnqueueGenerationJob();
 
-    await enqueueGenerationJob({
-      job_id: job.job_id,
-      request_body: {
-        ...payload,
-        created_by: createdBy,
-        run_id: run.run_id,
-      },
-    });
+      await enqueueGenerationJob({
+        job_id: job.job_id,
+        request_body: {
+          ...payload,
+          created_by: createdBy,
+          run_id: run.run_id,
+        },
+      });
+    } catch (err) {
+      console.error("QUEUE ERROR:", err);
+
+      return res.status(503).json({
+        ok: false,
+        message: "Queue unavailable. Try again later.",
+      });
+    }
 
     return res.status(202).json({
       ok: true,
       job_id: job.job_id,
-      run_id: run.run_id, // 👈 CRITICAL
+      run_id: run.run_id,
       status: "queued",
     });
   } catch (e) {
@@ -764,13 +830,14 @@ app.get("/api/db-health", async (_req, res) => {
   }
 });
 
-testDbConnection()
-  .then((row) => {
+(async () => {
+  try {
+    const row = await testDbConnection();
     console.log("PostgreSQL connected:", row);
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error("PostgreSQL connection failed:", err);
-  });
+  }
+})();
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
 app.listen(PORT, () => {

@@ -1167,6 +1167,47 @@ function buildQaSignals({
   };
 }
 
+function buildFlowModel(flows = []) {
+  const BUSINESS_PRIORITY = [
+    "initiation",
+    "validation",
+    "authorization",
+    "processing",
+    "settlement",
+    "response",
+  ];
+
+  const stageMap = new Map();
+
+  for (const f of flows) {
+    if (!f?.action) continue;
+
+    const action = String(f.action).toLowerCase().trim();
+
+    // Only keep business-level steps
+    if (f.step_type === "business_flow") {
+      stageMap.set(action, action);
+    }
+  }
+
+  // fallback if structured flow missing
+  if (stageMap.size === 0) {
+    for (const f of flows) {
+      if (!f?.action) continue;
+      stageMap.set(f.action, f.action);
+    }
+  }
+
+  // sort using business order
+  const ordered = [...stageMap.values()].sort((a, b) => {
+    return BUSINESS_PRIORITY.indexOf(a) - BUSINESS_PRIORITY.indexOf(b);
+  });
+
+  return {
+    stages: ordered.slice(0, 7),
+  };
+}
+
 export function extractDocSignals(input = {}) {
   const rawText = extractRawText(input);
   const cleanText = String(rawText || "").trim();
@@ -1178,6 +1219,7 @@ export function extractDocSignals(input = {}) {
   const acceptanceCriteria = extractAcceptanceCriteria(lines);
   const actors = detectActors(sentences);
   const flowResult = extractFlowSteps(sentences, lines);
+  const flowModel = buildFlowModel(flowResult.flows);
   const riskResult = extractRisks(sentences);
 
   const validations = extractValidations(sentences);
@@ -1237,13 +1279,21 @@ export function extractDocSignals(input = {}) {
 
   const context = inferDomainContext({
     featureHints,
-    flows: flowResult.flows,
+    flows: flowModel.stages.map((s) => ({
+      action: s,
+      step_type: "business_flow",
+    })),
+    flow_model: flowModel,
     risks: riskResult.risks,
   });
 
   const summary = buildDocSummary({
     actors,
-    flows: flowResult.flows,
+    flows: flowModel.stages.map((s) => ({
+      action: s,
+      step_type: "business_flow",
+    })),
+    flow_model: flowModel,
     validations,
     constraints,
     edgeCases,
@@ -1254,7 +1304,11 @@ export function extractDocSignals(input = {}) {
   });
 
   const qaSignals = buildQaSignals({
-    flows: flowResult.flows,
+    flows: flowModel.stages.map((s) => ({
+      action: s,
+      step_type: "business_flow",
+    })),
+    flow_model: flowModel,
     validations,
     constraints,
     edgeCases,
@@ -1284,7 +1338,11 @@ export function extractDocSignals(input = {}) {
     qa_signals: qaSignals,
 
     actors,
-    flows: flowResult.flows,
+    flows: flowModel.stages.map((s) => ({
+      action: s,
+      step_type: "business_flow",
+    })),
+    flow_model: flowModel,
     flow_evidence: flowResult.evidence,
 
     user_stories: userStories,
