@@ -5,8 +5,6 @@ import DashboardPage from "./DashboardPage";
 import GeneratorPage from "./GeneratorPage";
 import TestCasesPage from "./TestCasesPage";
 
-import ProjectOnboardingPage from "./ProjectOnboardingPage";
-
 const DEFAULT_GENERATOR_SETTINGS = {
   env: "staging",
   auth_profile: "",
